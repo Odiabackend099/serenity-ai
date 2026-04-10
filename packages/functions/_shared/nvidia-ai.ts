@@ -11,27 +11,11 @@ import type { AIMessage, EmergencyDetection } from './types.ts'
 
 const NVIDIA_API_BASE = 'https://integrate.api.nvidia.com/v1'
 const PRIMARY_MODEL = 'nvidia/llama-3.3-70b-instruct'
-const MAX_RPM = 35 // Buffer below 40 RPM free tier limit
 
-// Simple in-memory rate limiter (per Edge Function instance)
-const requestTimestamps: number[] = []
-
-function checkRateLimit(): boolean {
-  const now = Date.now()
-  const windowStart = now - 60_000 // 1-minute window
-
-  // Remove timestamps outside the window
-  while (requestTimestamps.length > 0 && requestTimestamps[0] < windowStart) {
-    requestTimestamps.shift()
-  }
-
-  if (requestTimestamps.length >= MAX_RPM) {
-    return false // Rate limit hit
-  }
-
-  requestTimestamps.push(now)
-  return true
-}
+// NOTE: In-memory rate limiting removed.
+// Reason: Per-instance limiting doesn't work in Deno Edge Functions (multi-instance deployment).
+// NVIDIA's own API returns 429 when rate limit (40 RPM free tier) is hit.
+// ai-assistant's exponential backoff already handles 429 with retry logic.
 
 // Dr Ade system prompt — DO NOT change without MD approval
 const DR_ADE_SYSTEM_PROMPT = `You are Dr Ade, the AI-powered receptionist and health assistant for Serenity Royale Hospital in Abuja, Nigeria. You represent the hospital with warmth, professionalism, and cultural sensitivity.
@@ -125,17 +109,6 @@ export async function callDrAde(
   const apiKey = Deno.env.get('NVIDIA_API_KEY')
   if (!apiKey) {
     throw new Error('NVIDIA_API_KEY must be set')
-  }
-
-  // Rate limit check
-  if (!checkRateLimit()) {
-    console.warn(`[nvidia-ai] Rate limit reached — using fallback response`)
-    return {
-      message: 'I\'m receiving a lot of messages right now. Please try again in a moment, or call us directly at +234 806 219 7384.',
-      sentiment: null,
-      usedFallback: true,
-      tokensUsed: 0,
-    }
   }
 
   const allMessages: AIMessage[] = [

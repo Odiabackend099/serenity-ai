@@ -17,8 +17,6 @@ import { getSupabaseClient, upsertPatient } from '../_shared/supabase.ts'
 import { verifyWebhookSignature, markAsRead } from '../_shared/whatsapp.ts'
 import type { WhatsAppWebhookPayload, WhatsAppMessage } from '../_shared/types.ts'
 
-const VERIFY_TOKEN = Deno.env.get('WHATSAPP_WEBHOOK_VERIFY_TOKEN') ?? 'serenity-webhook-token'
-
 serve(async (req: Request) => {
   const url = new URL(req.url)
 
@@ -27,6 +25,12 @@ serve(async (req: Request) => {
     const mode = url.searchParams.get('hub.mode')
     const token = url.searchParams.get('hub.verify_token')
     const challenge = url.searchParams.get('hub.challenge')
+
+    const VERIFY_TOKEN = Deno.env.get('WHATSAPP_WEBHOOK_VERIFY_TOKEN')
+    if (!VERIFY_TOKEN) {
+      console.error('[webhook] WHATSAPP_WEBHOOK_VERIFY_TOKEN env var not set')
+      return new Response('Server misconfigured', { status: 500 })
+    }
 
     if (mode === 'subscribe' && token === VERIFY_TOKEN) {
       console.log('[webhook] Webhook verified successfully')
