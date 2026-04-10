@@ -1,0 +1,254 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - generic [ref=e5]:
+        - img [ref=e7]
+        - generic [ref=e9]:
+          - paragraph [ref=e10]: Serenity AI
+          - paragraph [ref=e11]: Admin Dashboard
+      - navigation [ref=e12]:
+        - link "Overview" [ref=e13] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e14]
+          - text: Overview
+        - link "Conversations" [ref=e16] [cursor=pointer]:
+          - /url: /dashboard/conversations
+          - img [ref=e17]
+          - text: Conversations
+        - link "Appointments" [ref=e19] [cursor=pointer]:
+          - /url: /dashboard/appointments
+          - img [ref=e20]
+          - text: Appointments
+        - link "Emergencies" [ref=e22] [cursor=pointer]:
+          - /url: /dashboard/emergencies
+          - img [ref=e23]
+          - text: Emergencies
+        - link "Patients" [ref=e25] [cursor=pointer]:
+          - /url: /dashboard/patients
+          - img [ref=e26]
+          - text: Patients
+        - link "Analytics" [ref=e28] [cursor=pointer]:
+          - /url: /dashboard/analytics
+          - img [ref=e29]
+          - text: Analytics
+        - link "Audit Log" [ref=e31] [cursor=pointer]:
+          - /url: /dashboard/audit
+          - img [ref=e32]
+          - text: Audit Log
+        - link "Settings" [ref=e34] [cursor=pointer]:
+          - /url: /dashboard/settings
+          - img [ref=e35]
+          - text: Settings
+      - generic [ref=e38]:
+        - paragraph [ref=e39]: Serenity Royale Hospital
+        - paragraph [ref=e40]: Abuja, Nigeria
+        - button "Sign Out" [ref=e41] [cursor=pointer]:
+          - img [ref=e42]
+          - text: Sign Out
+    - main [ref=e44]:
+      - generic [ref=e45]:
+        - generic [ref=e46]:
+          - heading "Settings" [level=1] [ref=e47]
+          - paragraph [ref=e48]: Hospital configuration · Doctors · On-call · Admin users
+        - generic [ref=e49]:
+          - generic [ref=e50]:
+            - heading "🏥 Hospital Information" [level=2] [ref=e51]
+            - generic [ref=e52]:
+              - generic [ref=e53]:
+                - paragraph [ref=e54]: Hospital Name
+                - paragraph [ref=e55]: Serenity Royale Hospital
+              - generic [ref=e56]:
+                - paragraph [ref=e57]: Managing Director
+                - paragraph [ref=e58]: Dr. Kunle Adesina
+              - generic [ref=e59]:
+                - paragraph [ref=e60]: Primary Phone
+                - paragraph [ref=e61]: +234 806 219 7384
+              - generic [ref=e62]:
+                - paragraph [ref=e63]: Secondary Phone
+                - paragraph [ref=e64]: +234 811 689 1990
+              - generic [ref=e65]:
+                - paragraph [ref=e66]: Email
+                - paragraph [ref=e67]: info@serenityroyalehospital.com
+              - generic [ref=e68]:
+                - paragraph [ref=e69]: Website
+                - paragraph [ref=e70]: serenityroyalehospital.com
+              - generic [ref=e71]:
+                - paragraph [ref=e72]: Social Media
+                - paragraph [ref=e73]: "@serenityroyale_"
+              - generic [ref=e74]:
+                - paragraph [ref=e75]: Head Office (Galadimawa)
+                - paragraph [ref=e76]: No. 10 Royal Homes Estate, Galadinmawa, Abuja
+              - generic [ref=e77]:
+                - paragraph [ref=e78]: Annex (Karu)
+                - paragraph [ref=e79]: No. 11 Ali Amodu Close (behind CBN Quarters), Karu, Abuja
+              - generic [ref=e80]:
+                - paragraph [ref=e81]: Emergency Hours
+                - paragraph [ref=e82]: 24/7 every day including Sunday
+              - generic [ref=e83]:
+                - paragraph [ref=e84]: Outpatient Hours
+                - paragraph [ref=e85]: 8am – 4pm daily except Sunday
+          - generic [ref=e86]:
+            - heading "👨‍⚕️ Doctors (1 active)" [level=2] [ref=e87]
+            - group [ref=e88]:
+              - generic "+ Add New Doctor" [ref=e89] [cursor=pointer]
+              - option "Both Centers" [selected]
+              - option "Galadimawa"
+              - option "Karu"
+            - group [ref=e91]:
+              - generic "D Dr. Kunle Adesina Psychological Medicine & Psychiatry · Both Active" [ref=e92] [cursor=pointer]:
+                - generic [ref=e93]:
+                  - generic [ref=e94]: D
+                  - generic [ref=e95]:
+                    - paragraph [ref=e96]: Dr. Kunle Adesina
+                    - paragraph [ref=e97]: Psychological Medicine & Psychiatry · Both
+                - generic [ref=e98]: Active
+              - option "Both Centers" [selected]
+              - option "Galadimawa"
+              - option "Karu"
+          - generic [ref=e99]:
+            - heading "📅 On-Call Schedule" [level=2] [ref=e100]
+            - generic [ref=e101]:
+              - generic [ref=e102]:
+                - generic [ref=e103]: Doctor *
+                - combobox [ref=e104]:
+                  - option "Select doctor" [selected]
+                  - option "Dr. Kunle Adesina"
+              - generic [ref=e105]:
+                - generic [ref=e106]: From *
+                - textbox [ref=e107]
+              - generic [ref=e108]:
+                - generic [ref=e109]: To *
+                - textbox [ref=e110]
+              - generic [ref=e111]:
+                - generic [ref=e112]:
+                  - checkbox "Primary on-call" [ref=e113]
+                  - text: Primary on-call
+                - button "Add" [ref=e114] [cursor=pointer]
+            - generic [ref=e116]:
+              - generic [ref=e117]:
+                - paragraph [ref=e118]: Dr. Kunle Adesina
+                - paragraph [ref=e119]: Apr 10 – Apr 10, 2027
+              - generic [ref=e120]:
+                - generic [ref=e121]: Primary
+                - button "Remove" [ref=e123] [cursor=pointer]
+          - generic [ref=e124]:
+            - heading "🔐 Admin Users (1 active)" [level=2] [ref=e125]
+            - generic [ref=e126]:
+              - generic [ref=e127]:
+                - generic [ref=e128]: Name *
+                - textbox "Full Name" [ref=e129]
+              - generic [ref=e130]:
+                - generic [ref=e131]: Email *
+                - textbox "admin@hospital.com" [ref=e132]
+              - generic [ref=e133]:
+                - generic [ref=e134]: Role
+                - generic [ref=e135]:
+                  - combobox [ref=e136]:
+                    - option "Staff" [selected]
+                    - option "Doctor"
+                    - option "Admin"
+                    - option "Super Admin"
+                  - button "Invite" [ref=e137] [cursor=pointer]
+            - generic [ref=e139]:
+              - generic [ref=e140]:
+                - paragraph [ref=e141]: Dr. Kunle Adesina
+                - paragraph [ref=e142]: info@serenityroyalehospital.com
+              - generic [ref=e143]:
+                - generic [ref=e144]: super_admin
+                - generic [ref=e145]: Active
+                - button "Deactivate" [ref=e147] [cursor=pointer]
+          - generic [ref=e148]:
+            - heading "⚙️ API Configuration" [level=2] [ref=e149]
+            - generic [ref=e150]:
+              - generic [ref=e151]:
+                - generic [ref=e152]:
+                  - paragraph [ref=e153]: WhatsApp (Meta Cloud API)
+                  - paragraph [ref=e154]: Patient messaging channel
+                - code [ref=e155]: WHATSAPP_API_TOKEN
+              - generic [ref=e156]:
+                - generic [ref=e157]:
+                  - paragraph [ref=e158]: NVIDIA AI (Kimi K2.5 / Llama 3.3)
+                  - paragraph [ref=e159]: Dr Ade AI engine
+                - code [ref=e160]: NVIDIA_API_KEY
+              - generic [ref=e161]:
+                - generic [ref=e162]:
+                  - paragraph [ref=e163]: Deepgram STT/TTS
+                  - paragraph [ref=e164]: Voice note transcription + PII redaction
+                - code [ref=e165]: DEEPGRAM_API_KEY
+              - generic [ref=e166]:
+                - generic [ref=e167]:
+                  - paragraph [ref=e168]: Google Calendar
+                  - paragraph [ref=e169]: Appointment sync
+                - code [ref=e170]: GOOGLE_SERVICE_ACCOUNT_JSON
+              - generic [ref=e171]:
+                - generic [ref=e172]:
+                  - paragraph [ref=e173]: Twilio SMS
+                  - paragraph [ref=e174]: Emergency SMS alerts
+                - code [ref=e175]: TWILIO_ACCOUNT_SID
+              - generic [ref=e176]:
+                - generic [ref=e177]:
+                  - paragraph [ref=e178]: Gmail SMTP
+                  - paragraph [ref=e179]: Email notifications
+                - code [ref=e180]: SMTP_HOST
+            - paragraph [ref=e181]: API keys are configured via environment variables and Supabase Vault. Never expose them in this interface.
+          - generic [ref=e182]:
+            - heading "🛡️ NDPR / NDPA 2025 Compliance" [level=2] [ref=e183]
+            - generic [ref=e184]:
+              - generic [ref=e185]:
+                - generic [ref=e186]: ✓
+                - generic [ref=e187]: Explicit NDPR consent on first contact
+              - generic [ref=e188]:
+                - generic [ref=e189]: ✓
+                - generic [ref=e190]: Consent stored with timestamp & WhatsApp evidence
+              - generic [ref=e191]:
+                - generic [ref=e192]: ✓
+                - generic [ref=e193]: Audit trail for all data access (immutable)
+              - generic [ref=e194]:
+                - generic [ref=e195]: ✓
+                - generic [ref=e196]: PII redaction in transcriptions (Deepgram)
+              - generic [ref=e197]:
+                - generic [ref=e198]: ✓
+                - generic [ref=e199]: Patient data deletion request flow
+              - generic [ref=e200]:
+                - generic [ref=e201]: ✓
+                - generic [ref=e202]: Row-level security on all tables
+              - generic [ref=e203]:
+                - generic [ref=e204]: ✓
+                - generic [ref=e205]: Encrypted sensitive fields (pgcrypto)
+              - generic [ref=e206]:
+                - generic [ref=e207]: ✓
+                - generic [ref=e208]: NDPC breach notification procedure documented
+              - generic [ref=e209]:
+                - generic [ref=e210]: ✓
+                - generic [ref=e211]: Data retention policy (2yr inactive → pseudonymize)
+              - generic [ref=e212]:
+                - generic [ref=e213]: ✓
+                - generic [ref=e214]: Emergency alert deduplication (anti-fatigue)
+          - generic [ref=e215]:
+            - heading "ℹ️ System Information" [level=2] [ref=e216]
+            - generic [ref=e217]:
+              - generic [ref=e218]:
+                - paragraph [ref=e219]: Platform
+                - paragraph [ref=e220]: Supabase + Vercel (Next.js 14)
+              - generic [ref=e221]:
+                - paragraph [ref=e222]: AI Engine
+                - paragraph [ref=e223]: NVIDIA NIM — Kimi K2.5 / Llama 3.3 70B
+              - generic [ref=e224]:
+                - paragraph [ref=e225]: Messaging
+                - paragraph [ref=e226]: WhatsApp Business (Meta Cloud API)
+              - generic [ref=e227]:
+                - paragraph [ref=e228]: Speech-to-Text
+                - paragraph [ref=e229]: Deepgram (with PII redaction)
+              - generic [ref=e230]:
+                - paragraph [ref=e231]: Monorepo
+                - paragraph [ref=e232]: Turborepo
+              - generic [ref=e233]:
+                - paragraph [ref=e234]: NDPR Data Region
+                - paragraph [ref=e235]: US (Supabase) — see compliance notes
+              - generic [ref=e236]:
+                - paragraph [ref=e237]: Version
+                - paragraph [ref=e238]: 1.0.0
+              - generic [ref=e239]:
+                - paragraph [ref=e240]: Built by
+                - paragraph [ref=e241]: ODIADEV AI LTD
+  - alert [ref=e242]
