@@ -68,7 +68,7 @@ WHERE d.name = 'Dr. Kunle Adesina';
 -- ============================================================
 INSERT INTO api_quotas (provider, date, call_count, cost_usd, budget_usd)
 VALUES
-  ('nvidia', CURRENT_DATE, 0, 0, 10),
+  ('groq', CURRENT_DATE, 0, 0, 10),
   ('deepgram', CURRENT_DATE, 0, 0, 5),
   ('whatsapp', CURRENT_DATE, 0, 0, 20),
   ('twilio', CURRENT_DATE, 0, 0, 5),

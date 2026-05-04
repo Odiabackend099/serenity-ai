@@ -12,7 +12,7 @@
  */
 
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
-import { getSupabaseClient } from '../_shared/supabase.ts'
+import { getSupabaseClient, isAuthorizedInternalRequest } from '../_shared/supabase.ts'
 import { sendTextMessage } from '../_shared/whatsapp.ts'
 import { sendEmergencyAlertEmail } from '../_shared/email.ts'
 
@@ -31,9 +31,7 @@ const HOSPITAL_WHATSAPP = Deno.env.get('HOSPITAL_PHONE_PRIMARY') ?? '+2348062197
 const HOSPITAL_EMAIL = Deno.env.get('HOSPITAL_EMAIL') ?? 'info@serenityroyalehospital.com'
 
 serve(async (req: Request) => {
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-  const authHeader = req.headers.get('Authorization')
-  if (!authHeader?.includes(serviceKey?.slice(0, 20) ?? '')) {
+  if (!isAuthorizedInternalRequest(req)) {
     return new Response('Unauthorized', { status: 401 })
   }
 

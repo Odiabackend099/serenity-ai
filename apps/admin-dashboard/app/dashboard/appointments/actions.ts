@@ -5,10 +5,45 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 
 type AppointmentStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
 
+function getInternalFunctionConfig() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!supabaseUrl || !serviceKey) return null
+  return { supabaseUrl, serviceKey }
+}
+
+async function callNotificationFunction(payload: Record<string, unknown>): Promise<Response | null> {
+  const config = getInternalFunctionConfig()
+  if (!config) return null
+
+  return fetch(`${config.supabaseUrl}/functions/v1/send-notification`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.serviceKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function confirmAppointment(appointmentId: string): Promise<void> {
+  const res = await callNotificationFunction({
+    type: 'appointment_dashboard_confirmation',
+    appointmentId,
+  })
+
+  if (!res?.ok) {
+    console.error('[appointments] dashboard confirmation failed:', res ? await res.text().catch(() => res.statusText) : 'service not configured')
+  }
+
+  revalidatePath('/dashboard/appointments')
+  revalidatePath('/dashboard')
+}
+
 export async function updateAppointmentStatus(
   appointmentId: string,
   status: AppointmentStatus,
-): Promise<{ error?: string }> {
+): Promise<void> {
   const supabase = await createServerSupabaseClient()
 
   const { error } = await supabase
@@ -16,20 +51,22 @@ export async function updateAppointmentStatus(
     .update({ status })
     .eq('id', appointmentId)
 
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('[appointments] update status failed:', error.message)
+    return
+  }
 
   revalidatePath('/dashboard/appointments')
   revalidatePath('/dashboard')
-  return {}
 }
 
-export async function cancelAppointment(appointmentId: string): Promise<{ error?: string }> {
+export async function cancelAppointment(appointmentId: string): Promise<void> {
   const supabase = await createServerSupabaseClient()
 
   // Get calendar event ID before cancelling
   const { data: appt } = await supabase
     .from('appointments')
-    .select('google_calendar_event_id')
+    .select('google_calendar_event_id, patients(name, phone_number)')
     .eq('id', appointmentId)
     .single()
 
@@ -38,26 +75,21 @@ export async function cancelAppointment(appointmentId: string): Promise<{ error?
     .update({ status: 'cancelled' })
     .eq('id', appointmentId)
 
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('[appointments] cancel failed:', error.message)
+    return
+  }
 
   // Cancel Google Calendar event if linked (non-fatal)
   if (appt?.google_calendar_event_id) {
     try {
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-      if (supabaseUrl && serviceKey) {
-        await fetch(`${supabaseUrl}/functions/v1/send-notification`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${serviceKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            type: 'appointment_cancellation',
-            calendarEventId: appt.google_calendar_event_id,
-          }),
-        })
-      }
+      const patient = appt.patients as { name?: string; phone_number?: string } | null
+      await callNotificationFunction({
+        type: 'appointment_cancellation',
+        calendarEventId: appt.google_calendar_event_id,
+        patientPhone: patient?.phone_number,
+        patientName: patient?.name,
+      })
     } catch {
       // Non-fatal — appointment is cancelled in DB regardless
     }
@@ -65,13 +97,12 @@ export async function cancelAppointment(appointmentId: string): Promise<{ error?
 
   revalidatePath('/dashboard/appointments')
   revalidatePath('/dashboard')
-  return {}
 }
 
 export async function sendManualReminder(
   appointmentId: string,
   reminderType: '24h' | '1week',
-): Promise<{ error?: string }> {
+): Promise<void> {
   const supabase = await createServerSupabaseClient()
 
   const { data: appt } = await supabase
@@ -80,24 +111,21 @@ export async function sendManualReminder(
     .eq('id', appointmentId)
     .single()
 
-  if (!appt) return { error: 'Appointment not found' }
+  if (!appt) return
 
   const patient = appt.patients as { name?: string; phone_number?: string } | null
   const doctor = appt.doctors as { name?: string } | null
   const phone = patient?.phone_number?.replace('+', '')
 
-  if (!phone) return { error: 'Patient has no phone number' }
+  if (!phone) return
 
-  // Import WhatsApp helpers via Edge Function to avoid exposing API token
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const config = getInternalFunctionConfig()
+  if (!config) return
 
-  if (!supabaseUrl || !serviceKey) return { error: 'Service not configured' }
-
-  const res = await fetch(`${supabaseUrl}/functions/v1/appointment-reminder`, {
+  const res = await fetch(`${config.supabaseUrl}/functions/v1/appointment-reminder`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${serviceKey}`,
+      Authorization: `Bearer ${config.serviceKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -113,12 +141,14 @@ export async function sendManualReminder(
     }),
   })
 
-  if (!res.ok) return { error: 'Failed to send reminder' }
+  if (!res.ok) {
+    console.error('[appointments] manual reminder failed:', await res.text().catch(() => res.statusText))
+    return
+  }
 
   // Mark the reminder as sent
   const updateField = reminderType === '24h' ? 'reminder_24h_sent' : 'reminder_1week_sent'
   await supabase.from('appointments').update({ [updateField]: true }).eq('id', appointmentId)
 
   revalidatePath('/dashboard/appointments')
-  return {}
 }

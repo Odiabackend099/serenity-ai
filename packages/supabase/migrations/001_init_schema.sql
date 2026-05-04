@@ -144,8 +144,8 @@ CREATE TABLE IF NOT EXISTS booking_sessions (
   patient_phone VARCHAR(20) NOT NULL,
   patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
   status VARCHAR(20) DEFAULT 'in_progress' CHECK (status IN ('in_progress', 'completed', 'abandoned', 'timed_out')),
-  current_step SMALLINT DEFAULT 0 CHECK (current_step BETWEEN 0 AND 7),
-  -- Step 0=name, 1=sex, 2=location, 3=service_type, 4=doctor, 5=date, 6=time, 7=center
+  current_step SMALLINT DEFAULT 0 CHECK (current_step BETWEEN 0 AND 9),
+  -- Step 0=name, 1=sex, 2=location, 3=service_type, 4=doctor, 5=date, 6=time, 7=center, 8=email, 9=confirm
   collected_name VARCHAR(255),
   collected_sex VARCHAR(30),
   collected_location VARCHAR(255),
@@ -154,6 +154,7 @@ CREATE TABLE IF NOT EXISTS booking_sessions (
   collected_date DATE,
   collected_time TIME,
   collected_center VARCHAR(50),
+  collected_email VARCHAR(255),
   validation_errors JSONB DEFAULT '{}'::JSONB,
   step_history JSONB DEFAULT '[]'::JSONB,
   message_attempts SMALLINT DEFAULT 0,
@@ -189,6 +190,8 @@ CREATE TABLE IF NOT EXISTS appointments (
   cancellation_reason TEXT,
   google_calendar_event_id VARCHAR(500),
   google_calendar_synced_at TIMESTAMPTZ,
+  calendar_sync_status VARCHAR(80),
+  calendar_sync_error TEXT,
   -- Reminder tracking
   reminder_1week_sent BOOLEAN DEFAULT FALSE,
   reminder_1week_sent_at TIMESTAMPTZ,
@@ -254,11 +257,12 @@ CREATE TABLE IF NOT EXISTS notifications (
   notification_type VARCHAR(50) CHECK (notification_type IN (
     'appointment_confirmation', 'appointment_reminder_1week',
     'appointment_reminder_24h', 'appointment_reminder_2h',
+    'appointment_request_received', 'staff_booking_alert',
     'emergency_alert', 'feedback_request', 'consent_request',
     'data_export_ready', 'account_deleted'
   )),
   channel VARCHAR(20) CHECK (channel IN ('whatsapp', 'sms', 'email')),
-  template_name VARCHAR(100), -- WhatsApp template name used
+  template_name VARCHAR(100), -- Optional notification message label
   message_content TEXT,
   status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'delivered', 'read', 'failed')),
   external_message_id VARCHAR(255), -- WhatsApp/Twilio message ID
@@ -374,7 +378,7 @@ CREATE TABLE IF NOT EXISTS deletion_requests (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS api_quotas (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  provider VARCHAR(50) NOT NULL CHECK (provider IN ('nvidia', 'deepgram', 'whatsapp', 'twilio', 'google_calendar', 'sendgrid')),
+  provider VARCHAR(50) NOT NULL CHECK (provider IN ('groq', 'deepgram', 'whatsapp', 'twilio', 'google_calendar', 'sendgrid')),
   date DATE NOT NULL DEFAULT CURRENT_DATE,
   call_count INTEGER DEFAULT 0,
   tokens_used INTEGER DEFAULT 0,

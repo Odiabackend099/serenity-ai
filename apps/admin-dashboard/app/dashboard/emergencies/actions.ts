@@ -3,11 +3,11 @@
 import { revalidatePath } from 'next/cache'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 
-export async function acknowledgeAlert(alertId: string): Promise<{ error?: string }> {
+export async function acknowledgeAlert(alertId: string): Promise<void> {
   const supabase = await createServerSupabaseClient()
 
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Unauthorized' }
+  if (!user) return
 
   // Find admin_users record matching this auth user
   const { data: adminUser } = await supabase
@@ -25,18 +25,20 @@ export async function acknowledgeAlert(alertId: string): Promise<{ error?: strin
     .eq('id', alertId)
     .is('acknowledged_at', null) // Idempotent — only set once
 
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('[emergencies] acknowledge failed:', error.message)
+    return
+  }
 
   revalidatePath('/dashboard/emergencies')
   revalidatePath('/dashboard')
-  return {}
 }
 
-export async function resolveAlert(alertId: string, responseNotes: string): Promise<{ error?: string }> {
+export async function resolveAlert(alertId: string, responseNotes: string): Promise<void> {
   const supabase = await createServerSupabaseClient()
 
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Unauthorized' }
+  if (!user) return
 
   const { error } = await supabase
     .from('emergency_alerts')
@@ -49,9 +51,11 @@ export async function resolveAlert(alertId: string, responseNotes: string): Prom
     .eq('id', alertId)
     .is('resolved_at', null)
 
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('[emergencies] resolve failed:', error.message)
+    return
+  }
 
   revalidatePath('/dashboard/emergencies')
   revalidatePath('/dashboard')
-  return {}
 }

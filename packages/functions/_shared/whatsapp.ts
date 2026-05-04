@@ -1,134 +1,116 @@
 /**
- * WhatsApp Business Cloud API helpers.
- * Handles sending messages, media downloads, and template messages.
- * Rate limiting: per-patient 30 msg/min, global 80 msg/sec enforced by Meta.
+ * Twilio-only WhatsApp helpers.
+ *
+ * All WhatsApp traffic goes through Twilio Programmable Messaging using
+ * whatsapp: E.164 addresses. Other WhatsApp providers are intentionally unsupported.
  */
 
-const WHATSAPP_API_BASE = 'https://graph.facebook.com/v19.0'
+function getTwilioConfig(): { accountSid: string; authToken: string; whatsappFrom: string } {
+  const accountSid = Deno.env.get('TWILIO_ACCOUNT_SID')
+  const authToken = Deno.env.get('TWILIO_AUTH_TOKEN')
+  const whatsappFrom = Deno.env.get('TWILIO_WHATSAPP_NUMBER')
 
-function getConfig() {
-  const token = Deno.env.get('WHATSAPP_API_TOKEN')
-  const phoneNumberId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID')
-  if (!token || !phoneNumberId) {
-    throw new Error('WHATSAPP_API_TOKEN and WHATSAPP_PHONE_NUMBER_ID must be set')
+  if (!accountSid || !authToken || !whatsappFrom) {
+    throw new Error('Twilio WhatsApp is not configured — set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_NUMBER')
   }
-  return { token, phoneNumberId }
+
+  return { accountSid, authToken, whatsappFrom }
 }
 
-async function whatsappRequest(method: string, path: string, body?: unknown): Promise<unknown> {
-  const { token, phoneNumberId } = getConfig()
-  const url = `${WHATSAPP_API_BASE}/${phoneNumberId}${path}`
+function normalizeWhatsAppAddress(phone: string): string {
+  const trimmed = phone.trim()
+  if (trimmed.startsWith('whatsapp:')) return trimmed
+  const withPlus = trimmed.startsWith('+') ? trimmed : `+${trimmed}`
+  return `whatsapp:${withPlus}`
+}
 
-  const res = await fetch(url, {
-    method,
+function basicAuth(accountSid: string, authToken: string): string {
+  return `Basic ${btoa(`${accountSid}:${authToken}`)}`
+}
+
+async function sendTwilioWhatsApp(to: string, text: string): Promise<string> {
+  const { accountSid, authToken, whatsappFrom } = getTwilioConfig()
+
+  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
+    method: 'POST',
     headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
+      Authorization: basicAuth(accountSid, authToken),
+      'Content-Type': 'application/x-www-form-urlencoded',
     },
-    body: body ? JSON.stringify(body) : undefined,
+    body: new URLSearchParams({
+      From: normalizeWhatsAppAddress(whatsappFrom),
+      To: normalizeWhatsAppAddress(to),
+      Body: text,
+    }),
   })
 
   if (!res.ok) {
     const err = await res.text()
-    throw new Error(`WhatsApp API ${method} ${path} failed (${res.status}): ${err}`)
+    throw new Error(`Twilio WhatsApp send failed (${res.status}): ${err}`)
   }
 
-  return res.json()
+  const data = await res.json() as { sid?: string }
+  return data.sid ?? ''
 }
 
 /**
- * Send a plain text message to a WhatsApp number.
- * Use this within the 24-hour customer service window.
+ * Send a plain text WhatsApp message through Twilio.
  */
 export async function sendTextMessage(to: string, text: string): Promise<string> {
-  const data = await whatsappRequest('POST', '/messages', {
-    messaging_product: 'whatsapp',
-    recipient_type: 'individual',
-    to,
-    type: 'text',
-    text: { body: text, preview_url: false },
-  }) as { messages?: Array<{ id: string }> }
-
-  return data.messages?.[0]?.id ?? ''
+  return sendTwilioWhatsApp(to, text)
 }
 
 /**
- * Mark a WhatsApp message as read.
+ * Download media from a Twilio MediaUrl.
  */
-export async function markAsRead(messageId: string): Promise<void> {
-  await whatsappRequest('POST', '/messages', {
-    messaging_product: 'whatsapp',
-    status: 'read',
-    message_id: messageId,
-  })
-}
-
-/**
- * Send a WhatsApp template message.
- * REQUIRED for messaging outside the 24-hour window (reminders, confirmations, etc.)
- * Templates must be pre-approved in Meta Business Manager.
- */
-export async function sendTemplateMessage(
-  to: string,
-  templateName: string,
-  languageCode: string = 'en',
-  components: Array<{
-    type: 'header' | 'body' | 'button'
-    parameters: Array<{ type: 'text' | 'date_time' | 'currency'; text?: string }>
-  }> = [],
-): Promise<string> {
-  const data = await whatsappRequest('POST', '/messages', {
-    messaging_product: 'whatsapp',
-    recipient_type: 'individual',
-    to,
-    type: 'template',
-    template: {
-      name: templateName,
-      language: { code: languageCode },
-      components: components.length > 0 ? components : undefined,
-    },
-  }) as { messages?: Array<{ id: string }> }
-
-  return data.messages?.[0]?.id ?? ''
-}
-
-/**
- * Download media from WhatsApp by media ID.
- * Returns the raw bytes of the media file.
- */
-export async function downloadMedia(mediaId: string): Promise<{ data: ArrayBuffer; mimeType: string }> {
-  const { token } = getConfig()
-
-  // Step 1: Get media URL
-  const metaRes = await fetch(`${WHATSAPP_API_BASE}/${mediaId}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-
-  if (!metaRes.ok) {
-    throw new Error(`Failed to get media URL for ${mediaId}: ${metaRes.status}`)
+export async function downloadMedia(mediaUrl: string): Promise<{ data: ArrayBuffer; mimeType: string }> {
+  if (!mediaUrl.startsWith('http://') && !mediaUrl.startsWith('https://')) {
+    throw new Error('Twilio media download requires an absolute MediaUrl')
   }
 
-  const meta = await metaRes.json() as { url: string; mime_type: string }
-
-  // Step 2: Download actual file
-  const fileRes = await fetch(meta.url, {
-    headers: { Authorization: `Bearer ${token}` },
+  const { accountSid, authToken } = getTwilioConfig()
+  const fileRes = await fetch(mediaUrl, {
+    headers: { Authorization: basicAuth(accountSid, authToken) },
   })
 
   if (!fileRes.ok) {
-    throw new Error(`Failed to download media: ${fileRes.status}`)
+    throw new Error(`Failed to download Twilio media: ${fileRes.status}`)
   }
 
   return {
     data: await fileRes.arrayBuffer(),
-    mimeType: meta.mime_type,
+    mimeType: fileRes.headers.get('content-type') ?? 'application/octet-stream',
   }
 }
 
 /**
- * Send an appointment reminder (1 week before).
- * Uses pre-approved template message.
+ * Verify Twilio webhook signatures for form-encoded requests.
  */
+export async function verifyTwilioWebhookSignature(
+  requestUrl: string,
+  params: URLSearchParams,
+  signatureHeader: string,
+): Promise<boolean> {
+  const authToken = Deno.env.get('TWILIO_AUTH_TOKEN')
+  if (!authToken || !signatureHeader) return false
+
+  const sortedKeys = [...new Set([...params.keys()])].sort()
+  const data = requestUrl + sortedKeys.map((key) => `${key}${params.get(key) ?? ''}`).join('')
+
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(authToken),
+    { name: 'HMAC', hash: 'SHA-1' },
+    false,
+    ['sign'],
+  )
+
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data))
+  const expected = btoa(String.fromCharCode(...new Uint8Array(signature)))
+
+  return expected === signatureHeader
+}
+
 export async function sendAppointmentReminder1Week(
   to: string,
   patientName: string,
@@ -137,23 +119,12 @@ export async function sendAppointmentReminder1Week(
   center: string,
   doctorName: string,
 ): Promise<string> {
-  return sendTemplateMessage(to, 'appointment_reminder_1week', 'en', [
-    {
-      type: 'body',
-      parameters: [
-        { type: 'text', text: patientName },
-        { type: 'text', text: appointmentDate },
-        { type: 'text', text: appointmentTime },
-        { type: 'text', text: center },
-        { type: 'text', text: doctorName },
-      ],
-    },
-  ])
+  return sendTextMessage(
+    to,
+    `Dear ${patientName}, this is a reminder of your appointment at Serenity Royale Hospital in one week.\n\nDate: ${appointmentDate}\nTime: ${appointmentTime}\nCenter: ${center}\nDoctor: ${doctorName}\n\nTo reschedule, reply here or call +234 806 219 7384.`,
+  )
 }
 
-/**
- * Send an appointment reminder (24 hours before).
- */
 export async function sendAppointmentReminder24h(
   to: string,
   patientName: string,
@@ -161,22 +132,12 @@ export async function sendAppointmentReminder24h(
   appointmentTime: string,
   center: string,
 ): Promise<string> {
-  return sendTemplateMessage(to, 'appointment_reminder_24h', 'en', [
-    {
-      type: 'body',
-      parameters: [
-        { type: 'text', text: patientName },
-        { type: 'text', text: appointmentDate },
-        { type: 'text', text: appointmentTime },
-        { type: 'text', text: center },
-      ],
-    },
-  ])
+  return sendTextMessage(
+    to,
+    `Dear ${patientName}, this is a 24-hour reminder for your Serenity Royale Hospital appointment.\n\nDate: ${appointmentDate}\nTime: ${appointmentTime}\nCenter: ${center}\n\nPlease arrive 10-15 minutes early. To reschedule, reply here or call +234 806 219 7384.`,
+  )
 }
 
-/**
- * Send appointment confirmation to patient.
- */
 export async function sendAppointmentConfirmation(
   to: string,
   patientName: string,
@@ -186,80 +147,26 @@ export async function sendAppointmentConfirmation(
   doctorName: string,
   serviceType: string,
 ): Promise<string> {
-  return sendTemplateMessage(to, 'appointment_confirmation', 'en', [
-    {
-      type: 'body',
-      parameters: [
-        { type: 'text', text: patientName },
-        { type: 'text', text: serviceType },
-        { type: 'text', text: appointmentDate },
-        { type: 'text', text: appointmentTime },
-        { type: 'text', text: center },
-        { type: 'text', text: doctorName },
-      ],
-    },
-  ])
+  return sendTextMessage(
+    to,
+    `Appointment confirmed for ${patientName} at Serenity Royale Hospital.\n\nService: ${serviceType}\nDate: ${appointmentDate}\nTime: ${appointmentTime}\nCenter: ${center}\nDoctor: ${doctorName}\n\nPlease arrive 10-15 minutes early. To reschedule, reply here or call +234 806 219 7384.`,
+  )
 }
 
-/**
- * Send feedback request 24 hours after appointment.
- */
 export async function sendFeedbackRequest(
   to: string,
   patientName: string,
   doctorName: string,
 ): Promise<string> {
-  return sendTemplateMessage(to, 'feedback_request', 'en', [
-    {
-      type: 'body',
-      parameters: [
-        { type: 'text', text: patientName },
-        { type: 'text', text: doctorName },
-      ],
-    },
-  ])
-}
-
-/**
- * Send an emergency follow-up message to patient (24h after emergency).
- */
-export async function sendEmergencyFollowUp(to: string, patientName: string): Promise<string> {
-  return sendTemplateMessage(to, 'emergency_follow_up', 'en', [
-    {
-      type: 'body',
-      parameters: [{ type: 'text', text: patientName }],
-    },
-  ])
-}
-
-/**
- * Verify WhatsApp webhook HMAC-SHA256 signature.
- * Call this on every incoming webhook request.
- */
-export async function verifyWebhookSignature(
-  rawBody: string,
-  signatureHeader: string,
-): Promise<boolean> {
-  const appSecret = Deno.env.get('WHATSAPP_APP_SECRET')
-  if (!appSecret) {
-    console.error('WHATSAPP_APP_SECRET not set — cannot verify webhook signature')
-    return false
-  }
-
-  const expectedSig = signatureHeader.replace('sha256=', '')
-
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(appSecret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
+  return sendTextMessage(
+    to,
+    `Dear ${patientName}, thank you for visiting Serenity Royale Hospital. How would you rate your appointment with ${doctorName}? Reply with a number from 1 to 5 and any comment you would like to share.`,
   )
+}
 
-  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(rawBody))
-  const hex = Array.from(new Uint8Array(signature))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-
-  return hex === expectedSig
+export async function sendEmergencyFollowUp(to: string, patientName: string): Promise<string> {
+  return sendTextMessage(
+    to,
+    `Dear ${patientName}, Serenity Royale Hospital is checking in after your recent emergency support message. If you are still in immediate danger, call +234 806 219 7384 now or go to the nearest emergency department.`,
+  )
 }

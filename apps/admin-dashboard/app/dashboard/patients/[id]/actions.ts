@@ -6,7 +6,7 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 export async function updatePatient(
   patientId: string,
   formData: FormData,
-): Promise<{ error?: string }> {
+): Promise<void> {
   const supabase = await createServerSupabaseClient()
 
   const name = (formData.get('name') as string)?.trim() || null
@@ -20,21 +20,23 @@ export async function updatePatient(
     .update({ name, email, age: isNaN(age as number) ? null : age, gender, location })
     .eq('id', patientId)
 
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('[patients] update failed:', error.message)
+    return
+  }
 
   revalidatePath(`/dashboard/patients/${patientId}`)
   revalidatePath('/dashboard/patients')
-  return {}
 }
 
 export async function sendManualMessage(
   patientId: string,
   formData: FormData,
-): Promise<{ error?: string }> {
+): Promise<void> {
   const supabase = await createServerSupabaseClient()
 
   const message = (formData.get('message') as string)?.trim()
-  if (!message) return { error: 'Message cannot be empty' }
+  if (!message) return
 
   // Get patient phone number
   const { data: patient } = await supabase
@@ -43,12 +45,12 @@ export async function sendManualMessage(
     .eq('id', patientId)
     .single()
 
-  if (!patient?.phone_number) return { error: 'Patient has no phone number' }
+  if (!patient?.phone_number) return
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
-  if (!supabaseUrl || !serviceKey) return { error: 'Service not configured' }
+  if (!supabaseUrl || !serviceKey) return
 
   const phone = patient.phone_number.replace('+', '')
 
@@ -67,7 +69,8 @@ export async function sendManualMessage(
 
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    return { error: `Failed to send message${body ? `: ${body}` : ''}` }
+    console.error(`[patients] manual message failed${body ? `: ${body}` : ''}`)
+    return
   }
 
   // Log the outbound message as a conversation record
@@ -81,13 +84,12 @@ export async function sendManualMessage(
   })
 
   revalidatePath(`/dashboard/patients/${patientId}`)
-  return {}
 }
 
 export async function requestPatientDeletion(
   patientId: string,
   reason: string,
-): Promise<{ error?: string }> {
+): Promise<void> {
   const supabase = await createServerSupabaseClient()
 
   const { error } = await supabase.from('deletion_requests').insert({
@@ -97,8 +99,10 @@ export async function requestPatientDeletion(
     status: 'pending',
   })
 
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('[patients] deletion request failed:', error.message)
+    return
+  }
 
   revalidatePath(`/dashboard/patients/${patientId}`)
-  return {}
 }

@@ -12,7 +12,7 @@
  */
 
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
-import { getSupabaseClient } from '../_shared/supabase.ts'
+import { getSupabaseClient, isAuthorizedInternalRequest } from '../_shared/supabase.ts'
 import { sendTextMessage } from '../_shared/whatsapp.ts'
 
 const HOSPITAL_PHONE = Deno.env.get('HOSPITAL_PHONE_PRIMARY') ?? '+2348062197384'
@@ -21,9 +21,7 @@ const TWILIO_AUTH_TOKEN = Deno.env.get('TWILIO_AUTH_TOKEN')
 const TWILIO_FROM = Deno.env.get('TWILIO_PHONE_NUMBER')
 
 serve(async (req: Request) => {
-  const authHeader = req.headers.get('Authorization')
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-  if (!authHeader?.includes(serviceKey?.slice(0, 20) ?? '')) {
+  if (!isAuthorizedInternalRequest(req)) {
     return new Response('Unauthorized', { status: 401 })
   }
 

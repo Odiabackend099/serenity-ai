@@ -12,7 +12,8 @@ CREATE EXTENSION IF NOT EXISTS pg_net;
 -- ============================================================
 -- HELPER: read the Supabase service role key from vault
 -- Store it once with:
---   SELECT vault.create_secret('supabase-service-key', '<your-service-role-key>', 'Supabase service role key for Edge Function calls');
+--   SELECT vault.create_secret('https://your-project.supabase.co', 'supabase-url', 'Supabase project URL for Edge Function calls');
+--   SELECT vault.create_secret('<your-service-role-key>', 'supabase-service-key', 'Supabase service role key for Edge Function calls');
 -- ============================================================
 
 -- ============================================================
@@ -26,7 +27,7 @@ SELECT cron.schedule(
   '* * * * *',
   $$
   SELECT net.http_post(
-    url := (SELECT value FROM vault.decrypted_secrets WHERE name = 'supabase-url') || '/functions/v1/ai-assistant',
+    url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'supabase-url') || '/functions/v1/ai-assistant',
     headers := jsonb_build_object(
       'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'supabase-service-key'),
       'Content-Type', 'application/json'
@@ -45,7 +46,7 @@ SELECT cron.schedule(
   '0 8 * * *',
   $$
   SELECT net.http_post(
-    url := (SELECT value FROM vault.decrypted_secrets WHERE name = 'supabase-url') || '/functions/v1/appointment-reminder',
+    url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'supabase-url') || '/functions/v1/appointment-reminder',
     headers := jsonb_build_object(
       'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'supabase-service-key'),
       'Content-Type', 'application/json'
@@ -64,7 +65,7 @@ SELECT cron.schedule(
   '*/5 * * * *',
   $$
   SELECT net.http_post(
-    url := (SELECT value FROM vault.decrypted_secrets WHERE name = 'supabase-url') || '/functions/v1/escalation-check',
+    url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'supabase-url') || '/functions/v1/escalation-check',
     headers := jsonb_build_object(
       'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'supabase-service-key'),
       'Content-Type', 'application/json'

@@ -9,11 +9,11 @@ let _client: SupabaseClient | null = null
 export function getSupabaseClient(): SupabaseClient {
   if (_client) return _client
 
-  const url = Deno.env.get('SUPABASE_URL')
-  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+  const url = getSupabaseUrl()
+  const key = getSupabaseServiceRoleKey()
 
   if (!url || !key) {
-    throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set')
+    throw new Error('SUPABASE_URL and service role key must be set')
   }
 
   _client = createClient(url, key, {
@@ -24,6 +24,26 @@ export function getSupabaseClient(): SupabaseClient {
   })
 
   return _client
+}
+
+export function getSupabaseUrl(): string | undefined {
+  return Deno.env.get('SERENITY_SUPABASE_URL') ?? Deno.env.get('SUPABASE_URL')
+}
+
+export function getSupabaseServiceRoleKey(): string | undefined {
+  return Deno.env.get('SERENITY_SUPABASE_SERVICE_ROLE_KEY') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+}
+
+export function isAuthorizedInternalRequest(req: Request): boolean {
+  const authHeader = req.headers.get('Authorization')
+  const serviceKey = getSupabaseServiceRoleKey()
+  const internalSecret = Deno.env.get('INTERNAL_FUNCTION_SECRET')
+
+  if (serviceKey && authHeader?.includes(serviceKey.slice(0, 20))) {
+    return true
+  }
+
+  return Boolean(internalSecret && authHeader === `Bearer ${internalSecret}`)
 }
 
 /**

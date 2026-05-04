@@ -1,177 +1,119 @@
 /**
- * WhatsApp Webhook Edge Function
+ * Twilio WhatsApp Webhook Edge Function
  *
- * Responsibilities:
- * 1. Verify webhook via GET challenge (Meta setup)
- * 2. Verify HMAC-SHA256 signature on every POST
- * 3. Idempotency check (deduplicate duplicate webhook deliveries)
- * 4. Parse message, upsert patient, check NDPR consent
- * 5. Queue message in message_queue table — return 200 immediately
- *    (AI processing is async — avoids Edge Function CPU timeout)
+ * Receives Twilio form-encoded inbound WhatsApp messages, verifies
+ * X-Twilio-Signature, queues the message, and returns empty TwiML.
  *
- * Does NOT call NVIDIA AI directly — that's ai-assistant's job.
+ * Does NOT call the AI provider directly — ai-assistant processes the queue.
  */
 
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { getSupabaseClient, upsertPatient } from '../_shared/supabase.ts'
-import { verifyWebhookSignature, markAsRead } from '../_shared/whatsapp.ts'
-import type { WhatsAppWebhookPayload, WhatsAppMessage } from '../_shared/types.ts'
+import { verifyTwilioWebhookSignature } from '../_shared/whatsapp.ts'
 
 serve(async (req: Request) => {
-  const url = new URL(req.url)
-
-  // ── GET: Webhook verification (Meta setup step) ──────────────────────────
-  if (req.method === 'GET') {
-    const mode = url.searchParams.get('hub.mode')
-    const token = url.searchParams.get('hub.verify_token')
-    const challenge = url.searchParams.get('hub.challenge')
-
-    const VERIFY_TOKEN = Deno.env.get('WHATSAPP_WEBHOOK_VERIFY_TOKEN')
-    if (!VERIFY_TOKEN) {
-      console.error('[webhook] WHATSAPP_WEBHOOK_VERIFY_TOKEN env var not set')
-      return new Response('Server misconfigured', { status: 500 })
-    }
-
-    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-      console.log('[webhook] Webhook verified successfully')
-      return new Response(challenge, { status: 200 })
-    }
-
-    return new Response('Forbidden', { status: 403 })
-  }
-
-  // ── POST: Incoming message ────────────────────────────────────────────────
   if (req.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405 })
   }
 
-  // Clone body for signature verification (body can only be read once)
   const rawBody = await req.text()
+  const contentType = req.headers.get('content-type') ?? ''
 
-  // HMAC-SHA256 signature verification
-  const signature = req.headers.get('x-hub-signature-256') ?? ''
-  const isValid = await verifyWebhookSignature(rawBody, signature)
+  if (!contentType.includes('application/x-www-form-urlencoded')) {
+    return new Response('Unsupported Media Type', { status: 415 })
+  }
+
+  const params = new URLSearchParams(rawBody)
+  const signature = req.headers.get('x-twilio-signature') ?? ''
+  const publicWebhookUrl = Deno.env.get('TWILIO_WEBHOOK_URL')
+  const isValid =
+    await verifyTwilioWebhookSignature(publicWebhookUrl ?? req.url, params, signature) ||
+    Boolean(publicWebhookUrl && await verifyTwilioWebhookSignature(req.url, params, signature))
+
   if (!isValid) {
-    console.error('[webhook] Invalid signature — request rejected')
+    console.error('[webhook] Invalid Twilio signature — request rejected')
     return new Response('Unauthorized', { status: 401 })
   }
 
-  let payload: WhatsAppWebhookPayload
-  try {
-    payload = JSON.parse(rawBody)
-  } catch {
-    return new Response('Bad Request', { status: 400 })
-  }
-
-  // Must respond 200 within 5 seconds or Meta will retry
-  // Process asynchronously after responding
-  const processing = handlePayload(payload).catch((err) => {
-    console.error('[webhook] Processing error:', err)
+  const processing = processTwilioMessage(params).catch((err) => {
+    console.error('[webhook] Twilio processing error:', err)
   })
-
-  // Fire-and-forget — do not await
   void processing
 
-  return new Response('OK', { status: 200 })
+  return new Response('<Response></Response>', {
+    status: 200,
+    headers: { 'Content-Type': 'text/xml' },
+  })
 })
 
-async function handlePayload(payload: WhatsAppWebhookPayload): Promise<void> {
+async function processTwilioMessage(params: URLSearchParams): Promise<void> {
   const supabase = getSupabaseClient()
 
-  for (const entry of payload.entry ?? []) {
-    for (const change of entry.changes ?? []) {
-      const value = change.value
+  const fromRaw = params.get('From') ?? ''
+  const phoneNumber = fromRaw.replace(/^whatsapp:/, '')
+  const messageSid = params.get('MessageSid') ?? params.get('SmsMessageSid') ?? crypto.randomUUID()
+  const contactName = params.get('ProfileName') ?? undefined
+  const body = params.get('Body') || null
+  const numMedia = Number(params.get('NumMedia') ?? '0')
+  const mediaUrl = numMedia > 0 ? params.get('MediaUrl0') : null
+  const mimeType = numMedia > 0 ? params.get('MediaContentType0') : null
+  const messageType = getTwilioMessageType(mimeType, body)
+  const messageText = body || getTwilioMediaPlaceholder(messageType)
 
-      if (change.field !== 'messages') continue
-
-      // Process incoming messages
-      for (const message of value.messages ?? []) {
-        await processIncomingMessage(supabase, message, value.contacts?.[0]?.profile?.name)
-      }
-    }
+  if (!phoneNumber) {
+    throw new Error('Twilio webhook missing From phone number')
   }
-}
 
-async function processIncomingMessage(
-  supabase: ReturnType<typeof getSupabaseClient>,
-  message: WhatsAppMessage,
-  contactName?: string,
-): Promise<void> {
-  const phoneNumber = message.from
-
-  // ── Idempotency check ────────────────────────────────────────────────────
-  // Prevent duplicate processing if Meta delivers the same webhook twice
   const { data: existing } = await supabase
     .from('message_queue')
     .select('id')
-    .eq('whatsapp_message_id', message.id)
+    .eq('whatsapp_message_id', messageSid)
     .single()
 
   if (existing) {
-    console.log(`[webhook] Duplicate message ${message.id} — skipping`)
+    console.log(`[webhook] Duplicate Twilio message ${messageSid} — skipping`)
     return
   }
 
-  // ── Upsert patient ───────────────────────────────────────────────────────
   const patient = await upsertPatient(supabase, phoneNumber, contactName)
 
-  // Mark message as read immediately (good UX)
-  await markAsRead(message.id).catch((err) => {
-    console.warn('[webhook] Failed to mark as read:', err.message)
-  })
-
-  // ── Extract message content ──────────────────────────────────────────────
-  let messageText: string | null = null
-  let mediaUrl: string | null = null
-  let mimeType: string | null = null
-
-  switch (message.type) {
-    case 'text':
-      messageText = message.text?.body ?? null
-      break
-    case 'audio':
-      mimeType = message.audio?.mime_type ?? 'audio/ogg'
-      // Media ID stored for async download by ai-assistant
-      mediaUrl = message.audio?.id ?? null
-      messageText = '[Voice note]'
-      break
-    case 'image':
-      mimeType = message.image?.mime_type ?? 'image/jpeg'
-      mediaUrl = message.image?.id ?? null
-      messageText = message.image?.caption ?? '[Image]'
-      break
-    case 'video':
-      mimeType = message.video?.mime_type ?? 'video/mp4'
-      mediaUrl = message.video?.id ?? null
-      messageText = message.video?.caption ?? '[Video]'
-      break
-    case 'document':
-      mimeType = message.document?.mime_type ?? 'application/pdf'
-      mediaUrl = message.document?.id ?? null
-      messageText = message.document?.caption ?? `[${message.document?.filename ?? 'Document'}]`
-      break
-    default:
-      messageText = `[${message.type}]`
-  }
-
-  // ── Queue for async AI processing ────────────────────────────────────────
   const { error } = await supabase.from('message_queue').insert({
     patient_id: patient.id,
+    patient_phone: phoneNumber,
     phone_number: phoneNumber,
     message_text: messageText,
-    message_type: message.type,
+    message_type: messageType,
     media_url: mediaUrl,
     media_mime_type: mimeType,
-    whatsapp_message_id: message.id,
+    whatsapp_message_id: messageSid,
+    raw_payload: Object.fromEntries(params.entries()),
     status: 'queued',
     retry_count: 0,
     next_retry_at: new Date().toISOString(),
   })
 
   if (error) {
-    console.error(`[webhook] Failed to queue message ${message.id}:`, error.message)
+    console.error(`[webhook] Failed to queue Twilio message ${messageSid}:`, error.message)
     throw error
   }
 
-  console.log(`[webhook] Queued message ${message.id} from ${phoneNumber} (patient: ${patient.id})`)
+  console.log(`[webhook] Queued Twilio message ${messageSid} from ${phoneNumber} (patient: ${patient.id})`)
+}
+
+function getTwilioMessageType(mimeType: string | null, body: string | null): string {
+  if (!mimeType) return body ? 'text' : 'text'
+  if (mimeType.startsWith('audio/')) return 'audio'
+  if (mimeType.startsWith('image/')) return 'image'
+  if (mimeType.startsWith('video/')) return 'video'
+  return 'document'
+}
+
+function getTwilioMediaPlaceholder(messageType: string): string {
+  switch (messageType) {
+    case 'audio': return '[Voice note]'
+    case 'image': return '[Image]'
+    case 'video': return '[Video]'
+    case 'document': return '[Document]'
+    default: return ''
+  }
 }

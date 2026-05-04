@@ -9,7 +9,7 @@
 
 const GOOGLE_API_BASE = 'https://www.googleapis.com/calendar/v3'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
-const CALENDAR_ID = Deno.env.get('GOOGLE_CALENDAR_ID') ?? 'primary'
+const CALENDAR_ID = Deno.env.get('GOOGLE_CALENDAR_ID') ?? ''
 
 let _accessToken: string | null = null
 let _tokenExpiry = 0
@@ -27,6 +27,10 @@ interface ServiceAccountKey {
   private_key_id: string
 }
 
+export function isCalendarConfigured(): boolean {
+  return Boolean(Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON') && CALENDAR_ID)
+}
+
 /**
  * Get a valid Google OAuth2 access token for the service account.
  * Caches the token until 60 seconds before expiry.
@@ -37,8 +41,8 @@ async function getAccessToken(): Promise<string> {
   }
 
   const saJson = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON')
-  if (!saJson) {
-    throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON must be set')
+  if (!saJson || !CALENDAR_ID) {
+    throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON and GOOGLE_CALENDAR_ID must be set')
   }
 
   const sa: ServiceAccountKey = JSON.parse(saJson)
@@ -202,7 +206,7 @@ export async function cancelAppointmentEvent(eventId: string): Promise<void> {
 
 /**
  * Check if a doctor has availability for a given date/time.
- * Queries the calendar for overlapping events.
+ * Uses Google Calendar FreeBusy so external/manual events block confirmation.
  */
 export async function checkCalendarConflict(
   date: string,
@@ -213,11 +217,22 @@ export async function checkCalendarConflict(
   const endDateTime = `${date}T${incrementTime(time, durationMinutes)}:00+01:00`
 
   const data = await calendarRequest(
-    'GET',
-    `/calendars/${encodeURIComponent(CALENDAR_ID)}/events?timeMin=${encodeURIComponent(startDateTime)}&timeMax=${encodeURIComponent(endDateTime)}&singleEvents=true`,
-  ) as { items?: unknown[] }
+    'POST',
+    '/freeBusy',
+    {
+      timeMin: startDateTime,
+      timeMax: endDateTime,
+      timeZone: 'Africa/Lagos',
+      items: [{ id: CALENDAR_ID }],
+    },
+  ) as { calendars?: Record<string, { busy?: unknown[]; errors?: Array<{ reason?: string; domain?: string }> }> }
 
-  return (data.items?.length ?? 0) > 0
+  const calendar = data.calendars?.[CALENDAR_ID]
+  if (calendar?.errors?.length) {
+    throw new Error(`Google Calendar FreeBusy failed: ${JSON.stringify(calendar.errors)}`)
+  }
+
+  return (calendar?.busy?.length ?? 0) > 0
 }
 
 /**

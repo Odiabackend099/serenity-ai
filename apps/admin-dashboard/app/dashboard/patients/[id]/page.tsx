@@ -192,7 +192,7 @@ export default async function PatientDetailPage({
             </button>
           </form>
           <p className="text-xs text-gray-400 mt-1.5">
-            Note: Outside the 24h WhatsApp window, only pre-approved template messages can be delivered.
+            Note: Patient replies open the WhatsApp customer service window for Twilio free-form responses.
           </p>
         </details>
 
@@ -275,7 +275,7 @@ export default async function PatientDetailPage({
                     )}
 
                     {conv.transcription_redacted && (
-                      <p className="text-xs text-gray-500 mb-1.5">🎤 {conv.transcription_redacted}</p>
+                      <p className="text-xs text-gray-500 mb-1.5">Voice: {conv.transcription_redacted}</p>
                     )}
 
                     {conv.ai_response && (

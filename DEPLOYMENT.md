@@ -1,7 +1,7 @@
 # Serenity AI — Deployment Guide
 
 Complete step-by-step instructions to take the codebase from zero to production.
-Estimated total time: **3–4 hours** (excluding WhatsApp template approval which takes 1–2 weeks).
+Estimated total time: **3–4 hours**.
 
 ---
 
@@ -87,16 +87,18 @@ In Supabase Dashboard → **Settings** → **Edge Functions** → **Edit secrets
 SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 
-# WhatsApp (Meta Cloud API)
-WHATSAPP_API_TOKEN=your_whatsapp_permanent_token
-WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
-WHATSAPP_BUSINESS_ACCOUNT_ID=your_business_account_id
-WHATSAPP_WEBHOOK_VERIFY_TOKEN=choose_a_random_string  # e.g. serenity_whatsapp_verify_2025
-WHATSAPP_APP_SECRET=your_meta_app_secret  # for HMAC signature verification
+# Twilio WhatsApp + SMS
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your_twilio_auth_token
+TWILIO_WHATSAPP_NUMBER=+14155238886
+TWILIO_PHONE_NUMBER=+1xxxxxxxxxx
+TWILIO_WEBHOOK_URL=https://YOUR_PROJECT_REF.supabase.co/functions/v1/whatsapp-webhook
 
-# NVIDIA AI
-NVIDIA_API_KEY=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
-NVIDIA_MODEL=nvidia/llama-3.3-70b-instruct
+# Groq AI
+AI_PROVIDER=groq
+GROQ_API_KEY=your_groq_api_key
+GROQ_BASE_URL=https://api.groq.com/openai/v1
+GROQ_MODEL=llama-3.3-70b-versatile
 
 # Deepgram (Speech-to-Text)
 DEEPGRAM_API_KEY=c0f60c39e1994c1c708649f89d37f3873c88974e
@@ -105,14 +107,15 @@ DEEPGRAM_API_KEY=c0f60c39e1994c1c708649f89d37f3873c88974e
 GOOGLE_SERVICE_ACCOUNT_JSON={"client_email":"...","private_key":"..."}
 GOOGLE_CALENDAR_ID=your_calendar_id@gmail.com
 
-# Email (SMTP2GO — free tier works for low volume)
+# Email (HTTP API provider — set one)
+BREVO_API_KEY=your_brevo_api_key
+RESEND_API_KEY=your_resend_api_key
 SMTP_API_KEY=your_smtp2go_api_key
 SMTP_USER=info@serenityroyalehospital.com
-
-# Twilio (SMS for emergency alerts)
-TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_AUTH_TOKEN=your_twilio_auth_token
-TWILIO_PHONE_NUMBER=+1xxxxxxxxxx
+STAFF_BOOKING_EMAIL_TO=info@serenityroyalehospital.com
+STAFF_BOOKING_WHATSAPP_TO=+2348062197384
+BOOKING_NOTIFY_WHATSAPP_ENABLED=true
+BOOKING_NOTIFY_EMAIL_ENABLED=true
 
 # Hospital
 HOSPITAL_PHONE_PRIMARY=+2348062197384
@@ -221,93 +224,19 @@ Your dashboard URL: `https://serenity-ai-dashboard.vercel.app`
 https://YOUR_PROJECT_REF.supabase.co/functions/v1/whatsapp-webhook
 ```
 
-### 9b. Set up Meta App
+### 9b. Set up Twilio WhatsApp Sandbox or Sender
 
-1. Go to https://developers.facebook.com → **My Apps** → **Create App**
-2. Select **Business** type
-3. Add **WhatsApp** product
-4. In WhatsApp → **Configuration** → **Webhook**:
-   - Callback URL: `https://YOUR_PROJECT_REF.supabase.co/functions/v1/whatsapp-webhook`
-   - Verify token: the `WHATSAPP_WEBHOOK_VERIFY_TOKEN` you set in Step 5
-5. Subscribe to webhook fields: `messages`
-
-### 9c. Set up WhatsApp Business Account
-
-1. WhatsApp → **Getting Started** → Follow phone number setup
-2. Add the hospital's WhatsApp number (`+234 806 219 7384`)
-3. Note: The number must NOT have an active WhatsApp Business account before registration
-4. Generate a **permanent access token** (System User token, not temporary) → set as `WHATSAPP_API_TOKEN`
+1. In Twilio Console, open **Messaging → Try it out → Send a WhatsApp message** for Sandbox, or configure your approved WhatsApp sender.
+2. Set **When a message comes in** to `https://YOUR_PROJECT_REF.supabase.co/functions/v1/whatsapp-webhook`.
+3. Set the method to **POST**.
+4. Set `TWILIO_WEBHOOK_URL` to the exact public webhook URL above.
+5. For Sandbox testing, each test phone must send the join phrase and receive the Twilio "You are all set" confirmation before messages can be delivered.
 
 ---
 
-## Step 10 — Submit WhatsApp Message Templates
+## Step 10 — Twilio WhatsApp Message Policy
 
-**CRITICAL: Do this NOW — approval takes 1–2 weeks.**
-
-In Meta Business Manager → WhatsApp → **Message Templates** → **Create Template**:
-
-### Template 1: `appointment_confirmation`
-- Category: **UTILITY**
-- Language: **English**
-- Body:
-```
-Hi {{1}}, your appointment at Serenity Royale Hospital has been confirmed!
-
-Service: {{2}}
-Date: {{3}}
-Time: {{4}} WAT
-Center: {{5}}
-Doctor: {{6}}
-
-Please arrive 10-15 minutes early. Questions? Call +234 806 219 7384. See you soon! 💚
-```
-
-### Template 2: `appointment_reminder_1week`
-- Category: **UTILITY**
-- Body:
-```
-Hi {{1}}, this is a reminder that you have an appointment at Serenity Royale Hospital in one week.
-
-Date: {{2}}
-Time: {{3}} WAT
-Center: {{4}}
-Doctor: {{5}}
-
-To reschedule or for any questions, reply to this message or call +234 806 219 7384.
-```
-
-### Template 3: `appointment_reminder_24h`
-- Category: **UTILITY**
-- Body:
-```
-Hi {{1}}, your appointment at Serenity Royale Hospital is TOMORROW.
-
-Date: {{2}}
-Time: {{3}} WAT
-Center: {{4}}
-
-Please remember to bring any relevant documents. We look forward to seeing you! 💚
-```
-
-### Template 4: `feedback_request`
-- Category: **UTILITY**
-- Body:
-```
-Hi {{1}}, we hope your appointment with {{2}} at Serenity Royale Hospital went well.
-
-We'd love your feedback! Please rate your experience from 1 (poor) to 5 (excellent) by replying to this message.
-
-Your feedback helps us improve our care. Thank you! 💚
-```
-
-### Template 5: `emergency_follow_up`
-- Category: **UTILITY**
-- Body:
-```
-Hi {{1}}, we noticed you reached out to us during a difficult time. We want you to know that you are not alone, and our team is here for you.
-
-Please call us anytime at +234 806 219 7384 (24/7) or visit our nearest center. You matter to us. 💚
-```
+The MVP sends Twilio WhatsApp `Body` text messages through the Messages API. Future production campaigns that start conversations outside the customer service window should use approved Twilio Content messages.
 
 ---
 
@@ -326,14 +255,31 @@ Please call us anytime at +234 806 219 7384 (24/7) or visit our nearest center. 
 
 ---
 
-## Step 12 — Set Up Email (SMTP2GO — Recommended for Deno)
+## Step 12 — Set Up Email (HTTP API Provider)
 
-SMTP2GO works via HTTP API (not raw SMTP) — perfect for Deno Edge Functions.
+Edge Functions should send email through an HTTP API, not raw Gmail SMTP.
+Set exactly one of these providers:
 
-1. Sign up at https://www.smtp2go.com (free tier: 1,000 emails/month)
-2. Add sender domain: `serenityroyalehospital.com`
-3. Follow DNS verification steps
-4. API Keys → **Generate API Key** → copy → set as `SMTP_API_KEY`
+### Brevo (recommended fallback if SMTP2GO signup is unavailable)
+
+1. Sign up at https://www.brevo.com
+2. Verify a sender email or sender domain
+3. Go to SMTP & API → API Keys → generate an API key
+4. Set `BREVO_API_KEY`
+
+### Resend
+
+1. Sign up at https://resend.com
+2. Verify a sender domain
+3. API Keys → create an API key
+4. Set `RESEND_API_KEY`
+
+### SMTP2GO
+
+1. Sign up at https://www.smtp2go.com
+2. Add sender domain and follow DNS verification steps
+3. API Keys → generate API key
+4. Set `SMTP_API_KEY`
 
 ---
 
@@ -418,13 +364,13 @@ Expected jobs:
 - pg_cron logs: `SELECT * FROM cron.job_run_details ORDER BY start_time DESC LIMIT 20;`
 
 ### If WhatsApp messages stop delivering
-1. Check token expiry (permanent tokens don't expire, 24h tokens do)
-2. Check Meta App status (can be paused for policy violations)
-3. Check `WHATSAPP_API_TOKEN` in Edge Function secrets
+1. Check Twilio message logs for error codes.
+2. Confirm `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_NUMBER`, and `TWILIO_WEBHOOK_URL` in Edge Function secrets.
+3. Confirm the Sandbox recipient joined the Sandbox, or that the production sender is approved.
 
 ### If AI responses stop
-1. Check NVIDIA API key validity
-2. Check `api_quotas` table for `nvidia` provider — budget exceeded?
+1. Check Groq API key validity
+2. Check `api_quotas` table for `groq` provider — budget exceeded?
 3. Check `message_queue` for items stuck in `processing` state (reset to `queued`)
 
 ### If pg_cron jobs stop running
@@ -452,7 +398,7 @@ UPDATE message_queue SET status = 'queued', retry_count = 0 WHERE status = 'dead
 ```
 
 ### Emergency: disable WhatsApp webhook
-- In Meta Developer Portal → WhatsApp → Configuration → disable webhook
+- In Twilio Console, clear or replace the **When a message comes in** webhook URL.
 - This stops all incoming messages from being processed
 
 ---
@@ -465,21 +411,22 @@ UPDATE message_queue SET status = 'queued', retry_count = 0 WHERE status = 'dead
 |----------|----------|-------------|
 | `SUPABASE_URL` | ✅ | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Service role secret key |
-| `WHATSAPP_API_TOKEN` | ✅ | Meta permanent access token |
-| `WHATSAPP_PHONE_NUMBER_ID` | ✅ | WhatsApp phone number ID |
-| `WHATSAPP_BUSINESS_ACCOUNT_ID` | ✅ | WA Business Account ID |
-| `WHATSAPP_WEBHOOK_VERIFY_TOKEN` | ✅ | Custom verify token for webhook |
-| `WHATSAPP_APP_SECRET` | ✅ | Meta app secret (HMAC verification) |
-| `NVIDIA_API_KEY` | ✅ | NVIDIA NIM API key |
-| `NVIDIA_MODEL` | ✅ | `nvidia/llama-3.3-70b-instruct` |
+| `AI_PROVIDER` | ✅ | `groq` |
+| `GROQ_API_KEY` | ✅ | Groq API key |
+| `GROQ_BASE_URL` | ✅ | `https://api.groq.com/openai/v1` |
+| `GROQ_MODEL` | ✅ | `llama-3.3-70b-versatile` |
 | `DEEPGRAM_API_KEY` | ✅ | Deepgram API key |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | ✅ | Google service account JSON (full) |
 | `GOOGLE_CALENDAR_ID` | ✅ | Google Calendar ID |
-| `SMTP_API_KEY` | ✅ | SMTP2GO API key |
+| `BREVO_API_KEY` / `RESEND_API_KEY` / `SMTP_API_KEY` | ✅ | Email provider API key; set one |
 | `SMTP_USER` | ✅ | From email address |
 | `TWILIO_ACCOUNT_SID` | ✅ | Twilio account SID |
 | `TWILIO_AUTH_TOKEN` | ✅ | Twilio auth token |
 | `TWILIO_PHONE_NUMBER` | ✅ | Twilio from number |
+| `TWILIO_WHATSAPP_NUMBER` | ✅ | Twilio WhatsApp sender, including Sandbox number |
+| `TWILIO_WEBHOOK_URL` | ✅ | Exact public webhook URL used for signature validation |
+| `STAFF_BOOKING_WHATSAPP_TO` | ✅ | Dr K WhatsApp number for new booking alerts |
+| `STAFF_BOOKING_EMAIL_TO` | ✅ | Comma-separated staff email recipients for booking alerts |
 | `HOSPITAL_PHONE_PRIMARY` | ✅ | `+2348062197384` |
 | `HOSPITAL_EMAIL` | ✅ | `info@serenityroyalehospital.com` |
 
@@ -499,7 +446,7 @@ UPDATE message_queue SET status = 'queued', retry_count = 0 WHERE status = 'dead
 Patient (WhatsApp)
       │
       ▼
-Meta Cloud API
+Twilio WhatsApp
       │ POST (HMAC verified)
       ▼
 whatsapp-webhook (Edge Function)
@@ -512,8 +459,8 @@ ai-assistant (Edge Function)
   → Voice: Deepgram STT
   → Feedback detection
   → Emergency detection
-  → NVIDIA Kimi K2.5 / Llama 3.3
   → Booking state machine
+  → Groq AI for general non-booking questions
   → Save conversation
   → Reply via WhatsApp
   → If emergency: trigger emergency-alert
@@ -545,10 +492,10 @@ Admin Dashboard (Next.js on Vercel)
 |---------|------|-------------------|
 | Supabase | Free (up to 500MB DB, 2GB storage) | $0 |
 | Vercel | Hobby (free) | $0 |
-| NVIDIA NIM | Pay-per-token (~$0.0007/1K tokens) | ~$5–15 |
+| Groq | Pay-per-token / free dev tier depending on account | ~$0–15 |
 | Deepgram | Pay-per-minute (~$0.0043/min) | ~$2–5 |
 | WhatsApp | Free for first 1K conversations/month | $0 |
-| SMTP2GO | Free (1K emails/month) | $0 |
+| Brevo / Resend / SMTP2GO | Free or low-cost email API tier | $0–15 |
 | Twilio SMS | ~$0.0075/SMS | ~$1–3 |
 | Google Calendar | Free (within quota) | $0 |
 | **Total** | | **~$8–25/month** |

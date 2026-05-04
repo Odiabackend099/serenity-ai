@@ -61,7 +61,7 @@ export default async function EmergenciesPage() {
                     {/* Left: Alert info */}
                     <div className="flex items-start gap-3 min-w-0 flex-1">
                       <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
-                        <span className="text-lg">🚨</span>
+                        <span className="text-lg font-bold text-red-700">!</span>
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -87,7 +87,7 @@ export default async function EmergenciesPage() {
                         </div>
 
                         {escalation && (
-                          <p className={`text-xs mb-1 ${escalation.color}`}>⚠ {escalation.text}</p>
+                          <p className={`text-xs mb-1 ${escalation.color}`}>{escalation.text}</p>
                         )}
 
                         {alert.keywords_detected && alert.keywords_detected.length > 0 && (
@@ -164,7 +164,11 @@ export default async function EmergenciesPage() {
 
       {unresolved.length === 0 && (
         <div className="mb-8 p-6 bg-green-50 border border-green-200 rounded-xl text-center">
-          <p className="text-2xl mb-2">✅</p>
+          <div className="mx-auto mb-3 h-8 w-8 rounded-full bg-green-100 text-green-700 flex items-center justify-center">
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="m5 13 4 4L19 7" />
+            </svg>
+          </div>
           <p className="text-green-700 font-medium">No unresolved emergencies</p>
         </div>
       )}

@@ -39,7 +39,7 @@ CREATE UNIQUE INDEX idx_message_queue_whatsapp_id ON message_queue(whatsapp_mess
 
 -- Booking Sessions
 CREATE INDEX idx_booking_sessions_phone ON booking_sessions(patient_phone);
-CREATE INDEX idx_booking_sessions_status ON booking_sessions(status) WHERE status = 'in_progress';
+CREATE INDEX idx_booking_sessions_status ON booking_sessions(status) WHERE status = 'active';
 
 -- Audit Log
 CREATE INDEX idx_audit_log_user ON audit_log(admin_user_id, created_at DESC);
@@ -176,8 +176,8 @@ CREATE OR REPLACE FUNCTION expire_stale_booking_sessions()
 RETURNS void AS $$
 BEGIN
   UPDATE booking_sessions
-  SET status = 'timed_out', abandoned_at = NOW()
-  WHERE status = 'in_progress'
+  SET status = 'expired', abandoned_at = NOW()
+  WHERE status = 'active'
     AND last_message_at < NOW() - INTERVAL '30 minutes';
 END;
 $$ LANGUAGE plpgsql;

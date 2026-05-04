@@ -5,7 +5,7 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 
 // ── Doctors ──────────────────────────────────────────────────────────────────
 
-export async function addDoctor(formData: FormData): Promise<{ error?: string }> {
+export async function addDoctor(formData: FormData): Promise<void> {
   const supabase = await createServerSupabaseClient()
 
   const name = (formData.get('name') as string)?.trim()
@@ -15,7 +15,7 @@ export async function addDoctor(formData: FormData): Promise<{ error?: string }>
   const location = (formData.get('location') as string) || null
   const bio = (formData.get('bio') as string)?.trim() || null
 
-  if (!name) return { error: 'Doctor name is required' }
+  if (!name) return
 
   const { error } = await supabase.from('doctors').insert({
     name,
@@ -27,16 +27,18 @@ export async function addDoctor(formData: FormData): Promise<{ error?: string }>
     is_active: true,
   })
 
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('[settings] add doctor failed:', error.message)
+    return
+  }
 
   revalidatePath('/dashboard/settings')
-  return {}
 }
 
 export async function updateDoctor(
   doctorId: string,
   formData: FormData,
-): Promise<{ error?: string }> {
+): Promise<void> {
   const supabase = await createServerSupabaseClient()
 
   const name = (formData.get('name') as string)?.trim()
@@ -46,20 +48,22 @@ export async function updateDoctor(
   const location = (formData.get('location') as string) || null
   const bio = (formData.get('bio') as string)?.trim() || null
 
-  if (!name) return { error: 'Doctor name is required' }
+  if (!name) return
 
   const { error } = await supabase
     .from('doctors')
     .update({ name, speciality, phone, email, location, bio })
     .eq('id', doctorId)
 
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('[settings] update doctor failed:', error.message)
+    return
+  }
 
   revalidatePath('/dashboard/settings')
-  return {}
 }
 
-export async function deactivateDoctor(doctorId: string): Promise<{ error?: string }> {
+export async function deactivateDoctor(doctorId: string): Promise<void> {
   const supabase = await createServerSupabaseClient()
 
   const { error } = await supabase
@@ -67,13 +71,15 @@ export async function deactivateDoctor(doctorId: string): Promise<{ error?: stri
     .update({ is_active: false })
     .eq('id', doctorId)
 
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('[settings] deactivate doctor failed:', error.message)
+    return
+  }
 
   revalidatePath('/dashboard/settings')
-  return {}
 }
 
-export async function reactivateDoctor(doctorId: string): Promise<{ error?: string }> {
+export async function reactivateDoctor(doctorId: string): Promise<void> {
   const supabase = await createServerSupabaseClient()
 
   const { error } = await supabase
@@ -81,15 +87,17 @@ export async function reactivateDoctor(doctorId: string): Promise<{ error?: stri
     .update({ is_active: true })
     .eq('id', doctorId)
 
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('[settings] reactivate doctor failed:', error.message)
+    return
+  }
 
   revalidatePath('/dashboard/settings')
-  return {}
 }
 
 // ── On-Call Schedule ─────────────────────────────────────────────────────────
 
-export async function addOnCallSchedule(formData: FormData): Promise<{ error?: string }> {
+export async function addOnCallSchedule(formData: FormData): Promise<void> {
   const supabase = await createServerSupabaseClient()
 
   const doctor_id = formData.get('doctor_id') as string
@@ -98,11 +106,11 @@ export async function addOnCallSchedule(formData: FormData): Promise<{ error?: s
   const is_primary = formData.get('is_primary') === 'true'
 
   if (!doctor_id || !start_date || !end_date) {
-    return { error: 'Doctor, start date, and end date are required' }
+    return
   }
 
   if (end_date < start_date) {
-    return { error: 'End date must be on or after start date' }
+    return
   }
 
   const { error } = await supabase.from('on_call_schedule').insert({
@@ -112,13 +120,15 @@ export async function addOnCallSchedule(formData: FormData): Promise<{ error?: s
     is_primary,
   })
 
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('[settings] add on-call failed:', error.message)
+    return
+  }
 
   revalidatePath('/dashboard/settings')
-  return {}
 }
 
-export async function removeOnCallSchedule(scheduleId: string): Promise<{ error?: string }> {
+export async function removeOnCallSchedule(scheduleId: string): Promise<void> {
   const supabase = await createServerSupabaseClient()
 
   const { error } = await supabase
@@ -126,22 +136,24 @@ export async function removeOnCallSchedule(scheduleId: string): Promise<{ error?
     .delete()
     .eq('id', scheduleId)
 
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('[settings] remove on-call failed:', error.message)
+    return
+  }
 
   revalidatePath('/dashboard/settings')
-  return {}
 }
 
 // ── Admin Users ───────────────────────────────────────────────────────────────
 
-export async function inviteAdminUser(formData: FormData): Promise<{ error?: string }> {
+export async function inviteAdminUser(formData: FormData): Promise<void> {
   const supabase = await createServerSupabaseClient()
 
   const email = (formData.get('email') as string)?.trim().toLowerCase()
   const name = (formData.get('name') as string)?.trim()
   const role = (formData.get('role') as string) || 'staff'
 
-  if (!email || !name) return { error: 'Email and name are required' }
+  if (!email || !name) return
 
   // Check if already exists
   const { data: existing } = await supabase
@@ -151,25 +163,30 @@ export async function inviteAdminUser(formData: FormData): Promise<{ error?: str
     .single()
 
   if (existing) {
-    if (existing.is_active) return { error: 'This email is already registered as an admin user' }
+    if (existing.is_active) return
     // Reactivate
     const { error } = await supabase
       .from('admin_users')
       .update({ name, role, is_active: true })
       .eq('id', existing.id)
-    if (error) return { error: error.message }
+    if (error) {
+      console.error('[settings] reactivate admin failed:', error.message)
+      return
+    }
     revalidatePath('/dashboard/settings')
-    return {}
+    return
   }
 
   const { error } = await supabase.from('admin_users').insert({ email, name, role, is_active: true })
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('[settings] invite admin failed:', error.message)
+    return
+  }
 
   revalidatePath('/dashboard/settings')
-  return {}
 }
 
-export async function deactivateAdminUser(userId: string): Promise<{ error?: string }> {
+export async function deactivateAdminUser(userId: string): Promise<void> {
   const supabase = await createServerSupabaseClient()
 
   // Safety: don't deactivate the current user
@@ -181,7 +198,7 @@ export async function deactivateAdminUser(userId: string): Promise<{ error?: str
     .single()
 
   if (adminUser?.email === user?.email) {
-    return { error: 'You cannot deactivate your own account' }
+    return
   }
 
   const { error } = await supabase
@@ -189,8 +206,10 @@ export async function deactivateAdminUser(userId: string): Promise<{ error?: str
     .update({ is_active: false })
     .eq('id', userId)
 
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('[settings] deactivate admin failed:', error.message)
+    return
+  }
 
   revalidatePath('/dashboard/settings')
-  return {}
 }

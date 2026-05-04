@@ -169,7 +169,11 @@ export default async function PatientsPage({
         </>
       ) : (
         <div className="bg-white rounded-xl border border-gray-200 text-center py-16">
-          <p className="text-4xl mb-3">👥</p>
+          <div className="mx-auto mb-3 h-10 w-10 rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center text-gray-400">
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M16 11a4 4 0 1 0-8 0M4 20a8 8 0 0 1 16 0" />
+            </svg>
+          </div>
           <p className="text-gray-500">
             {search ? `No patients matching "${search}"` : 'No patients yet'}
           </p>

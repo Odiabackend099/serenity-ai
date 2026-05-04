@@ -126,7 +126,7 @@ export default async function ConversationsPage({
                           ? 'bg-red-100 text-red-700'
                           : 'bg-serenity-100 text-serenity-700'
                       }`}>
-                        {conv.has_emergency_keywords ? '🚨' : (patient?.name?.[0]?.toUpperCase() ?? '?')}
+                        {conv.has_emergency_keywords ? '!' : (patient?.name?.[0]?.toUpperCase() ?? '?')}
                       </div>
 
                       <div className="min-w-0 flex-1">
@@ -166,7 +166,7 @@ export default async function ConversationsPage({
 
                         {conv.transcription_redacted && (
                           <p className="text-xs text-gray-400 mt-0.5">
-                            🎤 Voice: {conv.transcription_redacted}
+                            Voice: {conv.transcription_redacted}
                           </p>
                         )}
                       </div>
@@ -184,7 +184,11 @@ export default async function ConversationsPage({
           </div>
         ) : (
           <div className="text-center py-16">
-            <p className="text-4xl mb-3">💬</p>
+            <div className="mx-auto mb-3 h-10 w-10 rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center text-gray-400">
+              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21 12a8 8 0 0 1-8 8H5l-2 2v-7a8 8 0 1 1 18-3Z" />
+              </svg>
+            </div>
             <p className="text-gray-500">
               {(search || sentimentFilter || typeFilter || emergencyOnly)
                 ? 'No conversations match your filters'

@@ -5,17 +5,22 @@
  * Uses a discriminated union payload so each type carries only what it needs.
  *
  * Types handled:
- *  - appointment_confirmation  → WhatsApp template + email (requires patientId)
+ *  - appointment_confirmation  → Twilio WhatsApp + email (requires patientId)
  *  - appointment_cancellation  → Cancel Google Calendar event (requires calendarEventId)
  *  - manual_message            → Send plain text to a phone directly (requires phone + message)
  *  - custom                    → Free-form WhatsApp text to a patient (requires patientId)
  */
 
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
-import { getSupabaseClient } from '../_shared/supabase.ts'
+import { getSupabaseClient, isAuthorizedInternalRequest } from '../_shared/supabase.ts'
 import { sendTextMessage, sendAppointmentConfirmation } from '../_shared/whatsapp.ts'
 import { sendAppointmentConfirmationEmail } from '../_shared/email.ts'
-import { cancelAppointmentEvent } from '../_shared/calendar.ts'
+import {
+  cancelAppointmentEvent,
+  checkCalendarConflict,
+  createAppointmentEvent,
+  isCalendarConfigured,
+} from '../_shared/calendar.ts'
 
 // ── Discriminated union payload ───────────────────────────────────────────────
 
@@ -43,6 +48,11 @@ type AppointmentCancellationPayload = {
   patientName?: string
 }
 
+type AppointmentDashboardConfirmationPayload = {
+  type: 'appointment_dashboard_confirmation'
+  appointmentId: string
+}
+
 type ManualMessagePayload = {
   type: 'manual_message'
   phone: string   // E.164 without +, e.g. "2348062197384"
@@ -58,15 +68,14 @@ type CustomPayload = {
 type NotificationPayload =
   | AppointmentConfirmationPayload
   | AppointmentCancellationPayload
+  | AppointmentDashboardConfirmationPayload
   | ManualMessagePayload
   | CustomPayload
 
 // ── Main handler ─────────────────────────────────────────────────────────────
 
 serve(async (req: Request) => {
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-  const authHeader = req.headers.get('Authorization')
-  if (!authHeader?.includes(serviceKey?.slice(0, 20) ?? '')) {
+  if (!isAuthorizedInternalRequest(req)) {
     return new Response('Unauthorized', { status: 401 })
   }
 
@@ -108,7 +117,7 @@ serve(async (req: Request) => {
         await cancelAppointmentEvent(payload.calendarEventId)
         console.log(`[send-notification] Cancelled calendar event ${payload.calendarEventId}`)
 
-        // Optionally notify patient via plain text (inside 24h window only — no template for cancellation)
+        // Optionally notify patient via Twilio WhatsApp plain text.
         if (payload.patientPhone && payload.patientName) {
           const phone = payload.patientPhone.replace('+', '')
           await sendTextMessage(
@@ -124,7 +133,22 @@ serve(async (req: Request) => {
       }
     }
 
-    // ── Appointment confirmation: WhatsApp template + email ──────────────────
+    // ── Dashboard confirmation: status + calendar + patient notifications ───
+    case 'appointment_dashboard_confirmation': {
+      if (!payload.appointmentId) {
+        return Response.json({ error: 'appointmentId is required' }, { status: 400 })
+      }
+
+      try {
+        const result = await confirmAppointmentFromDashboard(payload.appointmentId)
+        return Response.json(result)
+      } catch (err) {
+        console.error('[send-notification] dashboard confirmation failed:', (err as Error).message)
+        return Response.json({ error: (err as Error).message }, { status: 500 })
+      }
+    }
+
+    // ── Appointment confirmation: Twilio WhatsApp + email ────────────────────
     case 'appointment_confirmation': {
       const supabase = getSupabaseClient()
 
@@ -192,7 +216,7 @@ serve(async (req: Request) => {
               channel,
               status: 'sent',
               sent_at: new Date().toISOString(),
-            }).catch(() => {})
+            })
           }
         } catch (err) {
           console.error(`[send-notification] ${channel} failed:`, (err as Error).message)
@@ -206,7 +230,7 @@ serve(async (req: Request) => {
               channel,
               status: 'failed',
               error_message: (err as Error).message,
-            }).catch(() => {})
+            })
           }
         }
       }
@@ -242,6 +266,223 @@ serve(async (req: Request) => {
 })
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+type NotificationChannel = 'whatsapp' | 'sms' | 'email'
+type NotificationStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'failed'
+
+async function confirmAppointmentFromDashboard(appointmentId: string): Promise<Record<string, unknown>> {
+  const supabase = getSupabaseClient()
+  const { data: appointment, error } = await supabase
+    .from('appointments')
+    .select('*, patients(name, phone_number, email), doctors(name)')
+    .eq('id', appointmentId)
+    .single()
+
+  if (error || !appointment) {
+    throw new Error(error?.message ?? 'Appointment not found')
+  }
+
+  const patient = appointment.patients as { name?: string | null; phone_number?: string | null; email?: string | null } | null
+  const doctor = appointment.doctors as { name?: string | null } | null
+  const patientName = patient?.name ?? 'Patient'
+  const patientPhone = patient?.phone_number ?? ''
+  const doctorName = doctor?.name ?? 'To be assigned'
+  const appointmentDate = appointment.appointment_date
+  const appointmentTime = String(appointment.appointment_time ?? '09:00').slice(0, 5)
+  const center = appointment.center ?? 'Galadimawa'
+  const serviceType = appointment.service_type ?? 'Consultation'
+
+  let calendarEventId = appointment.google_calendar_event_id as string | null
+  let calendarStatus = appointment.calendar_sync_status as string | null
+  let calendarError: string | null = null
+
+  if (calendarEventId) {
+    calendarStatus = 'synced'
+  } else if (!isCalendarConfigured()) {
+    calendarStatus = 'pending_calendar_not_configured'
+    calendarError = 'Google Calendar service account or calendar ID is not configured'
+  } else {
+    try {
+      const hasDbConflict = await hasAppointmentDbConflict({
+        appointmentId,
+        doctorId: appointment.doctor_id as string | null,
+        appointmentDate,
+        appointmentTime: appointment.appointment_time as string | null,
+      })
+
+      if (hasDbConflict) {
+        calendarStatus = 'manual_confirm_database_conflict'
+        calendarError = 'Another active appointment exists for this doctor and slot'
+      } else if (await checkCalendarConflict(appointmentDate, appointmentTime)) {
+        calendarStatus = 'pending_calendar_busy'
+        calendarError = 'Google Calendar already has an event in this slot'
+      } else {
+        calendarEventId = await createAppointmentEvent({
+          patientName,
+          patientPhone,
+          doctorName,
+          serviceType,
+          center,
+          appointmentDate,
+          appointmentTime,
+          reason: 'Confirmed from Serenity AI dashboard',
+        })
+        calendarStatus = 'synced'
+      }
+    } catch (err) {
+      calendarStatus = 'pending_calendar_error'
+      calendarError = (err as Error).message
+    }
+  }
+
+  const updatePayload: Record<string, unknown> = {
+    status: 'confirmed',
+    google_calendar_event_id: calendarEventId,
+    google_calendar_synced_at: calendarEventId ? new Date().toISOString() : appointment.google_calendar_synced_at,
+    calendar_sync_status: calendarStatus,
+    calendar_sync_error: calendarError,
+  }
+
+  const { error: updateError } = await supabase
+    .from('appointments')
+    .update(updatePayload)
+    .eq('id', appointmentId)
+
+  if (updateError) throw new Error(updateError.message)
+
+  const results: Record<string, boolean | 'skipped'> = {
+    calendar: calendarStatus === 'synced',
+    whatsapp: 'skipped',
+    email: 'skipped',
+  }
+
+  if (patientPhone) {
+    try {
+      const sid = await sendAppointmentConfirmation(
+        patientPhone.replace('+', ''),
+        patientName,
+        appointmentDate,
+        appointmentTime,
+        center,
+        doctorName,
+        serviceType,
+      )
+      await logNotification({
+        patientId: appointment.patient_id,
+        appointmentId,
+        notificationType: 'appointment_confirmation',
+        channel: 'whatsapp',
+        message: `Dashboard confirmation sent to ${patientName}`,
+        status: 'sent',
+        externalMessageId: sid,
+      })
+      await supabase
+        .from('appointments')
+        .update({ confirmation_sent: true, confirmation_sent_at: new Date().toISOString() })
+        .eq('id', appointmentId)
+      results.whatsapp = true
+    } catch (err) {
+      await logNotification({
+        patientId: appointment.patient_id,
+        appointmentId,
+        notificationType: 'appointment_confirmation',
+        channel: 'whatsapp',
+        message: `Dashboard confirmation failed for ${patientName}`,
+        status: 'failed',
+        errorMessage: (err as Error).message,
+      })
+      results.whatsapp = false
+    }
+  }
+
+  if (patient?.email) {
+    try {
+      await sendAppointmentConfirmationEmail({
+        patientEmail: patient.email,
+        patientName,
+        appointmentDate,
+        appointmentTime,
+        center,
+        centerAddress: center,
+        doctorName,
+        serviceType,
+        status: 'confirmed',
+      })
+      await logNotification({
+        patientId: appointment.patient_id,
+        appointmentId,
+        notificationType: 'appointment_confirmation',
+        channel: 'email',
+        message: `Dashboard confirmation email sent to ${patient.email}`,
+        status: 'sent',
+      })
+      results.email = true
+    } catch (err) {
+      await logNotification({
+        patientId: appointment.patient_id,
+        appointmentId,
+        notificationType: 'appointment_confirmation',
+        channel: 'email',
+        message: `Dashboard confirmation email failed for ${patient.email}`,
+        status: 'failed',
+        errorMessage: (err as Error).message,
+      })
+      results.email = false
+    }
+  }
+
+  return { confirmed: true, appointmentId, calendarStatus, calendarError, results }
+}
+
+async function hasAppointmentDbConflict(params: {
+  appointmentId: string
+  doctorId: string | null
+  appointmentDate: string
+  appointmentTime: string | null
+}): Promise<boolean> {
+  if (!params.doctorId || !params.appointmentTime) return false
+
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase
+    .from('appointments')
+    .select('id')
+    .eq('doctor_id', params.doctorId)
+    .eq('appointment_date', params.appointmentDate)
+    .eq('appointment_time', params.appointmentTime)
+    .neq('id', params.appointmentId)
+    .neq('status', 'cancelled')
+    .limit(1)
+
+  if (error) throw new Error(error.message)
+  return (data?.length ?? 0) > 0
+}
+
+async function logNotification(params: {
+  patientId: string
+  appointmentId: string
+  notificationType: string
+  channel: NotificationChannel
+  message: string
+  status: NotificationStatus
+  externalMessageId?: string
+  errorMessage?: string
+}): Promise<void> {
+  const supabase = getSupabaseClient()
+  const { error } = await supabase.from('notifications').insert({
+    patient_id: params.patientId,
+    appointment_id: params.appointmentId,
+    notification_type: params.notificationType,
+    channel: params.channel,
+    template_name: params.notificationType,
+    message_content: params.message.slice(0, 2000),
+    status: params.status,
+    external_message_id: params.externalMessageId ?? null,
+    sent_at: params.status === 'sent' ? new Date().toISOString() : null,
+    error_message: params.errorMessage ?? null,
+  })
+
+  if (error) console.error('[send-notification] notification log failed:', error.message)
+}
 
 async function sendTwilioSms(to: string, body: string): Promise<void> {
   const accountSid = Deno.env.get('TWILIO_ACCOUNT_SID')

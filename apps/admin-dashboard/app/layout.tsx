@@ -1,14 +1,15 @@
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
 import './globals.css'
 
 export const dynamic = 'force-dynamic'
 
-const inter = Inter({ subsets: ['latin'] })
-
 export const metadata: Metadata = {
-  title: 'Serenity AI - Admin Dashboard',
+  title: 'Serenity Royale Hospital AI Dashboard',
   description: 'Hospital management dashboard for Serenity Royale Hospital',
+  icons: {
+    icon: '/brand/serenity-royale-logo.png',
+    apple: '/brand/serenity-royale-logo.png',
+  },
 }
 
 export default function RootLayout({
@@ -18,7 +19,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>{children}</body>
+      <body>{children}</body>
     </html>
   )
 }

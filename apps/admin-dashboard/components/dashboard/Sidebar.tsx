@@ -107,13 +107,13 @@ export default function Sidebar({ emergencyCount = 0 }: { emergencyCount?: numbe
       {/* Logo */}
       <div className="p-6 border-b border-serenity-800">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-teal-400 rounded-lg flex items-center justify-center flex-shrink-0">
-            <svg className="w-5 h-5 text-serenity-900" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-            </svg>
-          </div>
+          <img
+            src="/brand/serenity-royale-logo.png"
+            alt="Serenity Royale Hospital logo"
+            className="w-10 h-10 rounded-lg object-cover bg-white flex-shrink-0"
+          />
           <div>
-            <p className="font-bold text-sm leading-tight">Serenity AI</p>
+            <p className="font-bold text-sm leading-tight">Serenity Royale</p>
             <p className="text-serenity-400 text-xs">Admin Dashboard</p>
           </div>
         </div>
@@ -148,7 +148,14 @@ export default function Sidebar({ emergencyCount = 0 }: { emergencyCount?: numbe
 
       {/* Hospital Info */}
       <div className="p-4 border-t border-serenity-800">
-        <p className="text-serenity-400 text-xs mb-0.5">Serenity Royale Hospital</p>
+        <div className="flex items-center gap-2 mb-2">
+          <img
+            src="/brand/serenity-royale-logo.png"
+            alt=""
+            className="w-7 h-7 rounded object-cover bg-white"
+          />
+          <p className="text-serenity-300 text-xs font-medium">Serenity Royale Hospital</p>
+        </div>
         <p className="text-serenity-300 text-xs">Abuja, Nigeria</p>
         <button
           onClick={handleSignOut}

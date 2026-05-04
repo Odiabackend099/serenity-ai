@@ -10,15 +10,12 @@
  * - Feedback: send feedback request for appointments completed yesterday
  * - Daily list: email MD the full schedule for today
  *
- * CRITICAL: Uses WhatsApp template messages (not free-form).
- * Template messages are required outside the 24-hour customer service window.
- * Templates must be pre-approved in Meta Business Manager.
- *
- * Fallback: If WhatsApp fails, fall back to SMS via Twilio.
+ * Uses Twilio WhatsApp body messages for MVP reminders.
+ * Production business-initiated campaigns may need approved Twilio Content messages.
  */
 
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
-import { getSupabaseClient, trackApiUsage } from '../_shared/supabase.ts'
+import { getSupabaseClient, isAuthorizedInternalRequest, trackApiUsage } from '../_shared/supabase.ts'
 import {
   sendAppointmentReminder1Week,
   sendAppointmentReminder24h,
@@ -28,9 +25,7 @@ import { sendDailyAppointmentList } from '../_shared/email.ts'
 import { format, addDays, subDays } from 'https://esm.sh/date-fns@3'
 
 serve(async (req: Request) => {
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-  const authHeader = req.headers.get('Authorization')
-  if (!authHeader?.includes(serviceKey?.slice(0, 20) ?? '')) {
+  if (!isAuthorizedInternalRequest(req)) {
     return new Response('Unauthorized', { status: 401 })
   }
 
@@ -153,7 +148,7 @@ serve(async (req: Request) => {
         error_message: (err as Error).message,
         attempted_at: new Date().toISOString(),
         channel: 'whatsapp',
-      }).catch(() => {})
+      })
     }
   }
 
@@ -197,7 +192,7 @@ serve(async (req: Request) => {
         error_message: (err as Error).message,
         attempted_at: new Date().toISOString(),
         channel: 'whatsapp',
-      }).catch(() => {})
+      })
     }
   }
 

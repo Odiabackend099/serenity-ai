@@ -1,34 +1,5 @@
 // Shared types for all Supabase Edge Functions
 
-export interface WhatsAppMessage {
-  id: string
-  from: string
-  timestamp: string
-  type: 'text' | 'audio' | 'image' | 'video' | 'document' | 'sticker' | 'location'
-  text?: { body: string }
-  audio?: { id: string; mime_type: string }
-  image?: { id: string; caption?: string; mime_type: string }
-  video?: { id: string; caption?: string; mime_type: string }
-  document?: { id: string; filename?: string; caption?: string; mime_type: string }
-}
-
-export interface WhatsAppWebhookPayload {
-  object: string
-  entry: Array<{
-    id: string
-    changes: Array<{
-      value: {
-        messaging_product: string
-        metadata: { display_phone_number: string; phone_number_id: string }
-        contacts?: Array<{ profile: { name: string }; wa_id: string }>
-        messages?: WhatsAppMessage[]
-        statuses?: Array<{ id: string; status: string; timestamp: string; recipient_id: string }>
-      }
-      field: string
-    }>
-  }>
-}
-
 export interface PatientRow {
   id: string
   phone_number: string
@@ -89,6 +60,7 @@ export interface BookingSessionRow {
   collected_date: string | null
   collected_time: string | null
   collected_center: string | null
+  collected_email: string | null
   last_message_at: string
   completed_at: string | null
   created_at: string
@@ -127,6 +99,9 @@ export interface AppointmentRow {
   reason: string | null
   status: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
   google_calendar_event_id: string | null
+  google_calendar_synced_at: string | null
+  calendar_sync_status: string | null
+  calendar_sync_error: string | null
   reminder_1week_sent: boolean
   reminder_24h_sent: boolean
   created_at: string
@@ -157,16 +132,8 @@ export const BOOKING_STEPS = {
   DATE: 5,
   TIME: 6,
   CENTER: 7,
-  CONFIRM: 8,
+  EMAIL: 8,
+  CONFIRM: 9,
 } as const
 
 export type BookingStep = typeof BOOKING_STEPS[keyof typeof BOOKING_STEPS]
-
-// WhatsApp template names (must match Meta-approved templates)
-export const WA_TEMPLATES = {
-  APPOINTMENT_REMINDER_1WEEK: 'appointment_reminder_1week',
-  APPOINTMENT_REMINDER_24H: 'appointment_reminder_24h',
-  APPOINTMENT_CONFIRMATION: 'appointment_confirmation',
-  FEEDBACK_REQUEST: 'feedback_request',
-  EMERGENCY_FOLLOW_UP: 'emergency_follow_up',
-} as const

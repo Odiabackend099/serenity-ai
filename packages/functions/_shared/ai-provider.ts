@@ -1,21 +1,14 @@
 /**
- * NVIDIA NIM API client for Dr Ade AI assistant.
- * Uses OpenAI-compatible API at https://integrate.api.nvidia.com/v1
- * Model: nvidia/llama-3.3-70b-instruct (primary) or mistralai/mixtral-8x7b-instruct-v0.1 (fallback)
+ * OpenAI-compatible AI provider client for Dr Ade.
  *
- * Rate limit: 40 RPM free tier — we cap at 35 RPM (sliding window)
- * Daily budget tracking via api_quotas table
+ * Booking, consent, and emergency handling stay deterministic in backend code.
+ * This provider is only used for general non-booking patient questions.
  */
 
 import type { AIMessage, EmergencyDetection } from './types.ts'
 
-const NVIDIA_API_BASE = 'https://integrate.api.nvidia.com/v1'
-const PRIMARY_MODEL = 'nvidia/llama-3.3-70b-instruct'
-
-// NOTE: In-memory rate limiting removed.
-// Reason: Per-instance limiting doesn't work in Deno Edge Functions (multi-instance deployment).
-// NVIDIA's own API returns 429 when rate limit (40 RPM free tier) is hit.
-// ai-assistant's exponential backoff already handles 429 with retry logic.
+const DEFAULT_GROQ_BASE_URL = 'https://api.groq.com/openai/v1'
+const DEFAULT_GROQ_MODEL = 'llama-3.3-70b-versatile'
 
 // Dr Ade system prompt — DO NOT change without MD approval
 const DR_ADE_SYSTEM_PROMPT = `You are Dr Ade, the AI-powered receptionist and health assistant for Serenity Royale Hospital in Abuja, Nigeria. You represent the hospital with warmth, professionalism, and cultural sensitivity.
@@ -52,42 +45,33 @@ const DR_ADE_SYSTEM_PROMPT = `You are Dr Ade, the AI-powered receptionist and he
 - **Emergency**: 24/7 every day including Sunday
 - **Outpatient**: 8am - 4pm daily except Sunday
 
-## Costs (what patients ask about)
+## Costs
 - Registration: ₦30,000
 - Toxicology & profiling (substance abuse): ₦20,000
-- Monthly bills vary by center — direct them to call for current rates
+- Monthly bills vary by center — direct patients to call for current rates
 
 ## Appointment Booking
-When a patient wants to book an appointment, collect step by step:
-1. Full name (if not already known)
-2. Gender/Sex
-3. Location (within Abuja / outside Abuja)
-4. Service type (rehabilitation / psychiatric evaluation / physiotherapy / EEG / neurology / general medicine)
-5. Doctor preference (explain Dr. Adesina is the MD; other doctors available)
-6. Preferred date (within 6 months from today)
-7. Preferred time (8am–4pm window for outpatient)
-8. Preferred center (Karu / Galadimawa)
+When a patient wants to book an appointment, tell them you can help and let the booking system collect details step by step. Do not invent availability or confirm a slot yourself.
+
+## Hybrid Conversation Policy
+You are the conversational layer of a hybrid assistant. Backend templates handle consent, crisis escalation, appointment booking, appointment confirmations/cancellations, privacy/NDPR responses, exact costs, exact hours/locations, and medical safety boundaries.
+
+Use conversational AI only for low-risk general support, service explanations, wellness guidance, and clarifying questions. If the patient asks for a protected workflow, acknowledge briefly and route them to the appropriate action instead of improvising.
 
 ## Communication Style
-- Respond in the same language the patient uses (English, Hausa, Yoruba, Igbo)
-- Be warm but professional — like a trusted family doctor's receptionist
-- Keep responses concise for WhatsApp (3-4 sentences max unless explaining something complex)
+- Respond in the same language the patient uses when possible
+- Be warm but professional, like a trusted hospital receptionist
+- Keep responses concise for WhatsApp
 - Never give specific medical diagnoses or prescribe medications
 - Always encourage in-person consultation for serious concerns
-- If someone is in a mental health crisis, respond with empathy FIRST, then provide the emergency number
+- If someone is in crisis, respond with empathy first and provide the emergency number
+- Do not use long disclaimers unless the patient asks for clinical advice or safety-sensitive guidance
+- Do not mention internal routing, templates, Groq, Twilio, Supabase, or implementation details
 
 ## NDPR Data Privacy
 - On first contact, explain that you collect their data to provide healthcare services
 - Ask for explicit consent before storing personal information
 - Never share patient information with third parties
-
-## CRITICAL: Emergency Response
-If a patient expresses suicidal thoughts, self-harm intent, drug overdose, or panic attack:
-1. Respond with immediate empathy and de-escalation
-2. Provide emergency number: +234 806 219 7384 (available 24/7)
-3. Encourage them to call or come in immediately
-4. Do NOT minimize their feelings or dismiss the situation
-5. The system will automatically alert hospital staff
 
 You are here to help. Every person reaching out deserves care and compassion.`
 
@@ -96,19 +80,62 @@ export interface AIResponse {
   sentiment: 'positive' | 'neutral' | 'distressed' | 'crisis' | null
   usedFallback: boolean
   tokensUsed: number
+  provider: string
+}
+
+type ProviderConfig = {
+  provider: string
+  baseUrl: string
+  model: string
+  apiKey: string | null
+  maxTokens: number
+  temperature: number
+}
+
+function getProviderConfig(): ProviderConfig {
+  const provider = (Deno.env.get('AI_PROVIDER') ?? 'groq').toLowerCase()
+  const maxTokens = Number(Deno.env.get('AI_MAX_TOKENS') ?? Deno.env.get('GROQ_MAX_TOKENS') ?? '512')
+  const temperature = Number(Deno.env.get('AI_TEMPERATURE') ?? Deno.env.get('GROQ_TEMPERATURE') ?? '0.7')
+
+  if (provider === 'groq') {
+    return {
+      provider,
+      baseUrl: trimTrailingSlash(Deno.env.get('GROQ_BASE_URL') ?? Deno.env.get('AI_BASE_URL') ?? DEFAULT_GROQ_BASE_URL),
+      model: Deno.env.get('GROQ_MODEL') ?? Deno.env.get('AI_MODEL') ?? DEFAULT_GROQ_MODEL,
+      apiKey: Deno.env.get('GROQ_API_KEY') ?? Deno.env.get('AI_API_KEY') ?? null,
+      maxTokens,
+      temperature,
+    }
+  }
+
+  return {
+    provider,
+    baseUrl: trimTrailingSlash(Deno.env.get('AI_BASE_URL') ?? DEFAULT_GROQ_BASE_URL),
+    model: Deno.env.get('AI_MODEL') ?? DEFAULT_GROQ_MODEL,
+    apiKey: Deno.env.get('AI_API_KEY') ?? null,
+    maxTokens,
+    temperature,
+  }
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, '')
 }
 
 /**
- * Call NVIDIA NIM API with conversation history.
- * Falls back to a template response if rate-limited or API fails.
+ * Call Dr Ade AI with conversation history.
+ * Returns a fixed safe fallback instead of throwing so general AI failures do
+ * not poison the message queue or break deterministic booking.
  */
 export async function callDrAde(
   messages: AIMessage[],
-  patientPhone?: string,
+  _patientPhone?: string,
 ): Promise<AIResponse> {
-  const apiKey = Deno.env.get('NVIDIA_API_KEY')
-  if (!apiKey) {
-    throw new Error('NVIDIA_API_KEY must be set')
+  const config = getProviderConfig()
+
+  if (!config.apiKey) {
+    console.error(`[ai-provider] Missing API key for provider ${config.provider}`)
+    return fallbackResponse(config.provider)
   }
 
   const allMessages: AIMessage[] = [
@@ -117,57 +144,59 @@ export async function callDrAde(
   ]
 
   try {
-    const res = await fetch(`${NVIDIA_API_BASE}/chat/completions`, {
+    const res = await fetch(`${config.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: PRIMARY_MODEL,
+        model: config.model,
         messages: allMessages,
-        temperature: 0.7,
-        max_tokens: 512,
+        temperature: config.temperature,
+        max_tokens: config.maxTokens,
         top_p: 0.9,
       }),
     })
 
     if (!res.ok) {
       const err = await res.text()
-      throw new Error(`NVIDIA API error (${res.status}): ${err}`)
+      throw new Error(`${config.provider} API error (${res.status}): ${err}`)
     }
 
     const data = await res.json() as {
-      choices: Array<{ message: { content: string } }>
-      usage: { total_tokens: number }
+      choices?: Array<{ message?: { content?: string } }>
+      usage?: { total_tokens?: number }
     }
 
-    const content = data.choices[0]?.message?.content ?? ''
-    const tokensUsed = data.usage?.total_tokens ?? 0
-
-    // Detect sentiment from the AI response tone
-    const sentiment = detectSentimentFromResponse(messages)
+    const content = data.choices?.[0]?.message?.content?.trim() ?? ''
+    if (!content) throw new Error(`${config.provider} returned an empty response`)
 
     return {
-      message: content.trim(),
-      sentiment,
+      message: content,
+      sentiment: detectSentimentFromResponse(messages),
       usedFallback: false,
-      tokensUsed,
+      tokensUsed: data.usage?.total_tokens ?? 0,
+      provider: config.provider,
     }
   } catch (err) {
-    console.error('[nvidia-ai] API call failed:', err)
-    return {
-      message: 'I apologize, I\'m having a brief technical issue. Please call us at +234 806 219 7384 or try again shortly.',
-      sentiment: null,
-      usedFallback: true,
-      tokensUsed: 0,
-    }
+    console.error('[ai-provider] API call failed:', err)
+    return fallbackResponse(config.provider)
+  }
+}
+
+function fallbackResponse(provider: string): AIResponse {
+  return {
+    message: 'I apologize, I am having a brief technical issue with general questions. I can still help you book an appointment, or you can call us at +234 806 219 7384.',
+    sentiment: null,
+    usedFallback: true,
+    tokensUsed: 0,
+    provider,
   }
 }
 
 /**
  * Detect emergency keywords in a patient message.
- * Returns detection result with confidence score.
  */
 export function detectEmergency(message: string): EmergencyDetection {
   const lower = message.toLowerCase()
@@ -222,9 +251,6 @@ export function detectEmergency(message: string): EmergencyDetection {
   return bestMatch
 }
 
-/**
- * Simple sentiment detection from conversation messages.
- */
 function detectSentimentFromResponse(
   messages: AIMessage[],
 ): 'positive' | 'neutral' | 'distressed' | 'crisis' | null {
@@ -241,9 +267,6 @@ function detectSentimentFromResponse(
   return 'neutral'
 }
 
-/**
- * Build the NDPR consent request message for first-time patients.
- */
 export function buildConsentMessage(patientName?: string): string {
   const greeting = patientName ? `Hello ${patientName}! ` : 'Hello! '
   return `${greeting}Welcome to Serenity Royale Hospital. I'm Dr Ade, your AI health assistant. 🌿
@@ -253,9 +276,6 @@ To help you, I'll need to store some basic information (name, contact details, a
 *Do you consent to your information being stored for healthcare services?* Reply *YES* to continue or *NO* to decline (you can still call us at +234 806 219 7384).`
 }
 
-/**
- * Check if a message is a consent response.
- */
 export function isConsentResponse(message: string): 'yes' | 'no' | null {
   const lower = message.toLowerCase().trim()
   if (['yes', 'y', 'i agree', 'agree', 'ok', 'okay', 'accept', 'i consent', 'sure'].includes(lower)) return 'yes'

@@ -14,7 +14,7 @@ Serenity Royale Hospital (Abuja, Nigeria) needs a 24/7 AI receptionist to handle
 - Vercel account for frontend deployment
 - NVIDIA API key: `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`
 - Deepgram API key: `c0f60c39e1994c1c708649f89d37f3873c88974e`
-- Meta WhatsApp Business API access (hospital phones: +234 806 219 7384 and +234 811 689 1990)
+- Twilio WhatsApp/SMS access for patient messaging and emergency notifications
 - Google Calendar API service account
 - Twilio account for SMS
 - Gmail SMTP for email
@@ -46,7 +46,7 @@ Serenity Royale Hospital (Abuja, Nigeria) needs a 24/7 AI receptionist to handle
 
 **Steps**:
 1. Build `whatsapp-webhook` Edge Function (HMAC verification, immediate 200 OK, queue to message_queue)
-2. Build `_shared/whatsapp.ts` (send text/template messages via Meta Cloud API, rate limiting)
+2. Build `_shared/whatsapp.ts` (send Twilio WhatsApp body messages, media download, signature verification)
 3. Build `_shared/nvidia-ai.ts` (NVIDIA API client with rate limiting, budget tracking, fallback responses)
 4. Build `_shared/deepgram.ts` (STT with PII redaction enabled, TTS for voice responses)
 5. Build `ai-assistant` Edge Function (dequeue from message_queue, build conversation history, call NVIDIA, send response)
@@ -92,8 +92,8 @@ Serenity Royale Hospital (Abuja, Nigeria) needs a 24/7 AI receptionist to handle
 2. Build appointment booking conversational flow in AI assistant
 3. Build doctor_availability management (check slots before booking)
 4. Build `_shared/calendar.ts` (Google Calendar API with quota tracking)
-5. Build appointment confirmation notifications (WhatsApp template + email)
-6. Build `appointment-reminder` Edge Function + pg_cron (1-week + 24-hour reminders via templates)
+5. Build appointment confirmation notifications (Twilio WhatsApp + email)
+6. Build `appointment-reminder` Edge Function + pg_cron (1-week + 24-hour reminders via Twilio WhatsApp body messages)
 7. Build daily appointment list email to MD
 
 **Testing Criteria**:
@@ -104,7 +104,7 @@ Serenity Royale Hospital (Abuja, Nigeria) needs a 24/7 AI receptionist to handle
 - [ ] Booking session expires after 30-min timeout
 - [ ] Appointment created in database with correct fields
 - [ ] Google Calendar event created
-- [ ] Patient receives confirmation via WhatsApp template
+- [ ] Patient receives confirmation via Twilio WhatsApp
 - [ ] Hospital admin receives email notification
 - [ ] 1-week reminder sent for appointments >=1 month away
 - [ ] 24-hour reminder sent for all appointments
@@ -142,14 +142,14 @@ Serenity Royale Hospital (Abuja, Nigeria) needs a 24/7 AI receptionist to handle
 
 **Problems being solved**:
 - pg_cron jobs never activate → reminders, queue processor, MD daily list never run
-- `finalizeBooking()` creates appointment but never sends WhatsApp confirmation template
+- `finalizeBooking()` creates appointment but never sends Twilio WhatsApp confirmation
 - Feedback replies ("4", "Great!") go to Dr Ade as normal chat — never stored in `appointment_feedback`
 - Crisis message mid-booking leaves booking session open — should abort it
 - Emergency escalation (5→10→15 min cascade) mentioned in code but never implemented
 
 **Steps**:
 1. Migration 005: Enable `pg_cron` + `pg_net` extensions, create 3 scheduled jobs (queue processor every 1min, reminders at 9am WAT, MD list at 6pm WAT)
-2. ai-assistant: Call `sendAppointmentConfirmation()` template + email inside `finalizeBooking()` after DB insert
+2. ai-assistant: Call `sendAppointmentConfirmation()` Twilio WhatsApp message + email inside `finalizeBooking()` after DB insert
 3. ai-assistant: Before calling Dr Ade, detect if patient replied to feedback request (recent completed appointment, no feedback yet, message is a valid rating) → save to `appointment_feedback`, thank patient, skip AI
 4. ai-assistant: If emergency detected AND active booking session → mark session `abandoned`, do not advance
 5. New Edge Function `escalation-check`: pg_cron every 5 min, escalates unacknowledged alerts: level 1→2 at 5min (SMS), 2→3 at 10min (backup doctor WhatsApp), 3+ at 15min (switchboard call log)
@@ -164,7 +164,7 @@ Serenity Royale Hospital (Abuja, Nigeria) needs a 24/7 AI receptionist to handle
 
 **Testing Criteria**:
 - [ ] `SELECT * FROM cron.job` shows 3 scheduled jobs
-- [ ] Send "I want to book" → complete all steps → confirm → WhatsApp confirmation template received
+- [ ] Send "I want to book" → complete all steps → confirm → Twilio WhatsApp confirmation received
 - [ ] Reply "4" after appointment → `appointment_feedback` row created, thank-you message received
 - [ ] Reply "Excellent service" after appointment → same as above (text feedback stored)
 - [ ] Send crisis message during booking → booking_session status becomes 'abandoned'
@@ -231,7 +231,7 @@ Serenity Royale Hospital (Abuja, Nigeria) needs a 24/7 AI receptionist to handle
 
 **Steps**:
 1. Build analytics page (charts: daily conversations, appointment trends, emergency frequency, feedback ratings)
-2. Build feedback collection flow (24h post-appointment WhatsApp template survey)
+2. Build feedback collection flow (24h post-appointment Twilio WhatsApp survey)
 3. Build audit log dashboard (searchable, filterable, exportable)
 4. Build patient data export/deletion workflow (right to access + right to erasure)
 5. NDPR compliance audit checklist verification
@@ -316,7 +316,7 @@ After UX audit, 12 capabilities were missing from the admin dashboard:
 - [ ] Status dropdown changes appointment status in DB and UI refreshes
 - [ ] Cancel button sets status to 'cancelled' and appointment disappears from upcoming view
 - [ ] Past tab shows appointments before today
-- [ ] Send Reminder triggers WhatsApp template and marks reminder_24h_sent = true
+- [ ] Send Reminder triggers Twilio WhatsApp message and marks reminder_24h_sent = true
 - [ ] Cancel with Google Calendar ID removes the calendar event
 
 ---
@@ -418,7 +418,7 @@ After UX audit, 12 capabilities were missing from the admin dashboard:
 | No real-time updates | 10A | Supabase Realtime client component calls router.refresh() |
 | Appointment status read-only | 10B | Server actions + inline select/buttons |
 | No past appointments view | 10B | ?view=past searchParam tab |
-| No manual reminder trigger | 10B | Server action calls WhatsApp template directly |
+| No manual reminder trigger | 10B | Server action calls Twilio WhatsApp directly |
 | Doctors not manageable | 10C | Full CRUD forms in Settings |
 | On-call not manageable | 10C | Add/remove form in Settings |
 | Admin users not manageable | 10C | Invite/deactivate form in Settings |

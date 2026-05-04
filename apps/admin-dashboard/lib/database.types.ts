@@ -36,7 +36,7 @@ export interface Database {
           bio: string | null
           phone: string | null
           email: string | null
-          location: 'Galadinmawa' | 'Karu' | 'Both' | null
+          location: 'Galadimawa' | 'Galadinmawa' | 'Karu' | 'Both' | null
           is_active: boolean
           created_at: string
           updated_at: string
@@ -77,13 +77,15 @@ export interface Database {
           booking_session_id: string | null
           appointment_date: string
           appointment_time: string | null
-          center: 'Galadinmawa' | 'Karu' | null
+          center: 'Galadimawa' | 'Galadinmawa' | 'Karu' | null
           service_type: string | null
           reason: string | null
           status: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show' | 'rescheduled'
           cancellation_reason: string | null
           google_calendar_event_id: string | null
           google_calendar_synced_at: string | null
+          calendar_sync_status: string | null
+          calendar_sync_error: string | null
           reminder_1week_sent: boolean
           reminder_1week_sent_at: string | null
           reminder_1week_status: string | null
@@ -111,7 +113,7 @@ export interface Database {
           alert_type: 'self_harm' | 'suicidal' | 'drug_overdose' | 'panic_attack' | 'crisis' | 'other' | null
           keywords_detected: string[] | null
           alert_message: string | null
-          severity: 'warning' | 'critical'
+          severity: 'warning' | 'medium' | 'high' | 'critical'
           detection_confidence: number | null
           dedup_key: string | null
           alert_count: number
@@ -171,9 +173,9 @@ export interface Database {
       booking_sessions: {
         Row: {
           id: string
-          patient_phone: string
+          patient_phone: string | null
           patient_id: string | null
-          status: 'in_progress' | 'completed' | 'abandoned' | 'timed_out'
+          status: 'active' | 'completed' | 'abandoned' | 'expired'
           current_step: number
           collected_name: string | null
           collected_sex: string | null
@@ -183,6 +185,7 @@ export interface Database {
           collected_date: string | null
           collected_time: string | null
           collected_center: string | null
+          collected_email: string | null
           validation_errors: Json
           step_history: Json
           message_attempts: number
@@ -197,7 +200,9 @@ export interface Database {
       message_queue: {
         Row: {
           id: string
-          patient_phone: string
+          patient_phone: string | null
+          patient_id: string | null
+          phone_number: string | null
           message_text: string | null
           message_type: string
           whatsapp_message_id: string | null
@@ -240,6 +245,8 @@ export interface Database {
           minutes_processed: number
           cost_usd: number
           budget_usd: number
+          budget_used: number
+          daily_budget_limit: number | null
           alert_sent: boolean
         }
         Insert: Omit<Database['public']['Tables']['api_quotas']['Row'], 'id'>

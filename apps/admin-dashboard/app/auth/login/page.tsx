@@ -33,12 +33,12 @@ export default function LoginPage() {
       <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-serenity-600 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900">Serenity AI</h1>
+          <img
+            src="/brand/serenity-royale-logo.png"
+            alt="Serenity Royale Hospital logo"
+            className="w-20 h-20 rounded-full object-cover mx-auto mb-4 border border-gray-100 shadow-sm"
+          />
+          <h1 className="text-2xl font-bold text-gray-900">Serenity Royale Hospital</h1>
           <p className="text-gray-500 text-sm mt-1">Serenity Royale Hospital Admin</p>
         </div>
 
@@ -87,7 +87,7 @@ export default function LoginPage() {
         </form>
 
         <p className="text-center text-xs text-gray-400 mt-6">
-          Serenity Royale Hospital · NDPR Compliant · Secure Access
+          Serenity Royale Hospital AI Dashboard · NDPR Compliant · Secure Access
         </p>
       </div>
     </div>

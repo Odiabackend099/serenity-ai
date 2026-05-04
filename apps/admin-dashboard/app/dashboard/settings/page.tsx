@@ -18,6 +18,12 @@ export default async function SettingsPage() {
     { data: doctors },
     { data: onCallSchedule },
     { data: adminUsers },
+    { count: recentMessages },
+    { count: pendingQueue },
+    { count: pendingAiAppointments },
+    { count: calendarSyncedAppointments },
+    { data: latestStaffWhatsApp },
+    { data: latestEmailNotification },
   ] = await Promise.all([
     supabase.from('doctors').select('*').order('name'),
     supabase
@@ -27,10 +33,48 @@ export default async function SettingsPage() {
       .order('start_date', { ascending: true })
       .limit(20),
     supabase.from('admin_users').select('*').order('name'),
+    supabase.from('message_queue').select('*', { count: 'exact', head: true }).gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+    supabase.from('message_queue').select('*', { count: 'exact', head: true }).in('status', ['queued', 'failed', 'dead_letter']),
+    supabase.from('appointments').select('*', { count: 'exact', head: true }).eq('status', 'pending').eq('created_from_whatsapp', true),
+    supabase.from('appointments').select('*', { count: 'exact', head: true }).eq('calendar_sync_status', 'synced'),
+    supabase.from('notifications').select('status, error_message, created_at').eq('notification_type', 'staff_booking_alert').eq('channel', 'whatsapp').order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    supabase.from('notifications').select('status, error_message, created_at').eq('channel', 'email').order('created_at', { ascending: false }).limit(1).maybeSingle(),
   ])
 
   const activeDoctors = doctors?.filter((d) => d.is_active) ?? []
   const inactiveDoctors = doctors?.filter((d) => !d.is_active) ?? []
+  const readinessItems = [
+    {
+      label: 'Twilio WhatsApp two-way',
+      value: (recentMessages ?? 0) > 0 ? 'Verified in last 24h' : 'Needs live message',
+      tone: (recentMessages ?? 0) > 0 ? 'green' : 'amber',
+    },
+    {
+      label: 'AI processing queue',
+      value: (pendingQueue ?? 0) === 0 ? 'Clear' : `${pendingQueue} needs review`,
+      tone: (pendingQueue ?? 0) === 0 ? 'green' : 'red',
+    },
+    {
+      label: 'Pending WhatsApp bookings',
+      value: `${pendingAiAppointments ?? 0} pending`,
+      tone: (pendingAiAppointments ?? 0) === 0 ? 'green' : 'amber',
+    },
+    {
+      label: 'Google Calendar sync',
+      value: (calendarSyncedAppointments ?? 0) > 0 ? 'Synced appointments found' : 'No synced appointment yet',
+      tone: (calendarSyncedAppointments ?? 0) > 0 ? 'green' : 'amber',
+    },
+    {
+      label: 'Dr K staff WhatsApp alert',
+      value: latestStaffWhatsApp?.status === 'sent' ? 'Sent' : latestStaffWhatsApp?.status === 'failed' ? 'Failed' : 'No proof yet',
+      tone: latestStaffWhatsApp?.status === 'sent' ? 'green' : latestStaffWhatsApp?.status === 'failed' ? 'red' : 'amber',
+    },
+    {
+      label: 'Resend email notifications',
+      value: latestEmailNotification?.status === 'sent' ? 'Sent' : latestEmailNotification?.status === 'failed' ? 'Failed' : 'No proof yet',
+      tone: latestEmailNotification?.status === 'sent' ? 'green' : latestEmailNotification?.status === 'failed' ? 'red' : 'amber',
+    },
+  ]
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -41,11 +85,25 @@ export default async function SettingsPage() {
 
       <div className="space-y-8">
 
+        {/* ── MVP Readiness ─────────────────────────────────────────────── */}
+        <section className="bg-white rounded-lg border border-gray-200 p-6">
+          <h2 className="font-semibold text-gray-900 mb-4">MVP Readiness Checklist</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {readinessItems.map((item) => (
+              <div key={item.label} className={`rounded-md border px-3 py-2 ${readinessTone(item.tone)}`} title={item.value}>
+                <p className="text-xs font-semibold uppercase tracking-wide opacity-75">{item.label}</p>
+                <p className="text-sm font-bold mt-0.5">{item.value}</p>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-gray-400 mt-3">
+            Statuses are based on recent database activity and notification logs, not exposed API secrets.
+          </p>
+        </section>
+
         {/* ── Hospital Information ───────────────────────────────────────── */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            🏥 Hospital Information
-          </h2>
+        <section className="bg-white rounded-lg border border-gray-200 p-6">
+          <h2 className="font-semibold text-gray-900 mb-4">Hospital Information</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
             {[
               { label: 'Hospital Name', value: 'Serenity Royale Hospital' },
@@ -69,10 +127,8 @@ export default async function SettingsPage() {
         </section>
 
         {/* ── Doctors ───────────────────────────────────────────────────── */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="font-semibold text-gray-900 mb-5 flex items-center gap-2">
-            👨‍⚕️ Doctors ({activeDoctors.length} active)
-          </h2>
+        <section className="bg-white rounded-lg border border-gray-200 p-6">
+          <h2 className="font-semibold text-gray-900 mb-5">Doctors ({activeDoctors.length} active)</h2>
 
           {/* Add Doctor Form */}
           <details className="mb-5">
@@ -277,10 +333,8 @@ export default async function SettingsPage() {
         </section>
 
         {/* ── On-Call Schedule ───────────────────────────────────────────── */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="font-semibold text-gray-900 mb-5 flex items-center gap-2">
-            📅 On-Call Schedule
-          </h2>
+        <section className="bg-white rounded-lg border border-gray-200 p-6">
+          <h2 className="font-semibold text-gray-900 mb-5">On-Call Schedule</h2>
 
           {/* Add Schedule Form */}
           <form action={addOnCallSchedule} className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-5 p-4 bg-gray-50 rounded-lg">
@@ -456,18 +510,17 @@ export default async function SettingsPage() {
         </section>
 
         {/* ── API Configuration ─────────────────────────────────────────── */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            ⚙️ API Configuration
-          </h2>
+        <section className="bg-white rounded-lg border border-gray-200 p-6">
+          <h2 className="font-semibold text-gray-900 mb-4">API Configuration</h2>
           <div className="space-y-3 text-sm">
             {[
-              { name: 'WhatsApp (Meta Cloud API)', envKey: 'WHATSAPP_API_TOKEN', description: 'Patient messaging channel' },
-              { name: 'NVIDIA AI (Kimi K2.5 / Llama 3.3)', envKey: 'NVIDIA_API_KEY', description: 'Dr Ade AI engine' },
+              { name: 'Twilio WhatsApp', envKey: 'TWILIO_WHATSAPP_NUMBER', description: 'Patient WhatsApp messaging channel' },
+              { name: 'Groq AI (Llama 3.3)', envKey: 'GROQ_API_KEY', description: 'Dr Ade general-question engine' },
               { name: 'Deepgram STT/TTS', envKey: 'DEEPGRAM_API_KEY', description: 'Voice note transcription + PII redaction' },
               { name: 'Google Calendar', envKey: 'GOOGLE_SERVICE_ACCOUNT_JSON', description: 'Appointment sync' },
               { name: 'Twilio SMS', envKey: 'TWILIO_ACCOUNT_SID', description: 'Emergency SMS alerts' },
-              { name: 'Gmail SMTP', envKey: 'SMTP_HOST', description: 'Email notifications' },
+              { name: 'Resend Email', envKey: 'RESEND_API_KEY', description: 'Patient and staff email notifications' },
+              { name: 'Supabase', envKey: 'SUPABASE_SERVICE_ROLE_KEY', description: 'Database, auth, and Edge Function service access' },
             ].map((api) => (
               <div key={api.name} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                 <div>
@@ -510,15 +563,14 @@ export default async function SettingsPage() {
         </section>
 
         {/* ── System Info ───────────────────────────────────────────────── */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            ℹ️ System Information
-          </h2>
+        <section className="bg-white rounded-lg border border-gray-200 p-6">
+          <h2 className="font-semibold text-gray-900 mb-4">System Information</h2>
           <div className="grid grid-cols-2 gap-4 text-sm">
             {[
               { label: 'Platform', value: 'Supabase + Vercel (Next.js 14)' },
-              { label: 'AI Engine', value: 'NVIDIA NIM — Kimi K2.5 / Llama 3.3 70B' },
-              { label: 'Messaging', value: 'WhatsApp Business (Meta Cloud API)' },
+              { label: 'AI Engine', value: 'Groq — Llama 3.3' },
+              { label: 'Messaging', value: 'Twilio WhatsApp + Twilio SMS' },
+              { label: 'Email', value: 'Resend HTTP API' },
               { label: 'Speech-to-Text', value: 'Deepgram (with PII redaction)' },
               { label: 'Monorepo', value: 'Turborepo' },
               { label: 'NDPR Data Region', value: 'US (Supabase) — see compliance notes' },
@@ -535,4 +587,15 @@ export default async function SettingsPage() {
       </div>
     </div>
   )
+}
+
+function readinessTone(tone: string) {
+  switch (tone) {
+    case 'green':
+      return 'border-emerald-100 bg-emerald-50 text-emerald-700'
+    case 'red':
+      return 'border-red-100 bg-red-50 text-red-700'
+    default:
+      return 'border-amber-100 bg-amber-50 text-amber-700'
+  }
 }
