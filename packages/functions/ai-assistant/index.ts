@@ -981,13 +981,14 @@ async function notifyStaffOfBookedAppointment(
         })
       } catch (err) {
         console.error(`[ai-assistant] Staff WhatsApp booking alert failed for ${recipient.role}:`, err)
+        const failure = notificationFailureFromError(err)
         await logAppointmentNotification(supabase, {
           patientId: params.patientId,
           appointmentId: params.appointmentId,
           channel: 'whatsapp',
           message: whatsappBody,
-          status: 'failed',
-          errorMessage: (err as Error).message,
+          status: failure.status,
+          errorMessage: failure.message,
           recipientRole: recipient.role,
           recipientName: recipient.name,
           recipientPhone: recipient.phone,
@@ -1061,6 +1062,18 @@ function getStaffNotificationRecipients(assignedDoctor: DoctorContact | null): S
   }
 
   return recipients
+}
+
+function notificationFailureFromError(err: unknown): { status: 'pending' | 'failed'; message: string } {
+  const message = err instanceof Error ? err.message : String(err)
+  if (message.includes('63038') || message.toLowerCase().includes('daily messages limit')) {
+    return {
+      status: 'pending',
+      message: 'WhatsApp delivery is queued. The Twilio daily message limit has been reached; retry after the limit resets or after the hospital sender is upgraded.',
+    }
+  }
+
+  return { status: 'failed', message }
 }
 
 function isSamePhone(a: string, b: string): boolean {
@@ -1148,7 +1161,7 @@ async function logAppointmentNotification(
     templateName?: string
     channel: 'whatsapp' | 'email'
     message: string
-    status: 'sent' | 'failed'
+    status: 'sent' | 'pending' | 'failed'
     externalMessageId?: string
     errorMessage?: string
     recipientRole?: 'primary_doctor' | 'operations_manager' | 'assigned_doctor' | 'patient' | 'staff_email'

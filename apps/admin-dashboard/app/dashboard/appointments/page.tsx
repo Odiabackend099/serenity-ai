@@ -325,6 +325,9 @@ function AppointmentCard({
 
           {appointment.status === 'confirmed' && (
             <>
+              <form action={confirmAppointment.bind(null, appointment.id)}>
+                <ActionButton tone="secondary">Retry alerts</ActionButton>
+              </form>
               <form action={updateAppointmentStatus.bind(null, appointment.id, 'completed')}>
                 <ActionButton tone="secondary">Completed</ActionButton>
               </form>
@@ -425,7 +428,7 @@ function ProofBadge({ label, status, detail }: { label: string; status: Notifica
       : status === 'skipped'
         ? 'gray'
         : 'amber'
-  const value = status === 'none' ? 'No proof' : status
+  const value = status === 'none' ? 'No proof' : status === 'pending' ? 'Queued' : status
 
   return (
     <div title={detail} className={`rounded-md border px-2.5 py-2 ${toneClasses(tone).soft}`}>

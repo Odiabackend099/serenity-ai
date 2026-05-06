@@ -17,7 +17,6 @@ import { sendTextMessage, sendAppointmentConfirmation } from '../_shared/whatsap
 import { sendAppointmentConfirmationEmail } from '../_shared/email.ts'
 import {
   cancelAppointmentEvent,
-  checkCalendarConflict,
   createAppointmentEvent,
   isCalendarConfigured,
 } from '../_shared/calendar.ts'
@@ -223,13 +222,14 @@ serve(async (req: Request) => {
           results[channel] = false
 
           if (payload.appointmentId) {
+            const failure = notificationFailureFromError(err)
             await supabase.from('notifications').insert({
               patient_id: payload.patientId,
               appointment_id: payload.appointmentId,
               notification_type: payload.type,
               channel,
-              status: 'failed',
-              error_message: (err as Error).message,
+              status: failure.status,
+              error_message: failure.message,
             })
           }
         }
@@ -318,9 +318,6 @@ async function confirmAppointmentFromDashboard(appointmentId: string): Promise<R
       if (hasDbConflict) {
         calendarStatus = 'manual_confirm_database_conflict'
         calendarError = 'Another active appointment exists for this doctor and slot'
-      } else if (await checkCalendarConflict(appointmentDate, appointmentTime)) {
-        calendarStatus = 'pending_calendar_busy'
-        calendarError = 'Google Calendar already has an event in this slot'
       } else {
         calendarEventId = await createAppointmentEvent({
           patientName,
@@ -346,6 +343,7 @@ async function confirmAppointmentFromDashboard(appointmentId: string): Promise<R
     google_calendar_synced_at: calendarEventId ? new Date().toISOString() : appointment.google_calendar_synced_at,
     calendar_sync_status: calendarStatus,
     calendar_sync_error: calendarError,
+    reason: buildDashboardConfirmationReason(appointment.reason as string | null, calendarStatus),
   }
 
   const { error: updateError } = await supabase
@@ -390,14 +388,15 @@ async function confirmAppointmentFromDashboard(appointmentId: string): Promise<R
         .eq('id', appointmentId)
       results.whatsapp = true
     } catch (err) {
+      const failure = notificationFailureFromError(err)
       await logNotification({
         patientId: appointment.patient_id,
         appointmentId,
         notificationType: 'appointment_confirmation',
         channel: 'whatsapp',
         message: `Dashboard confirmation failed for ${patientName}`,
-        status: 'failed',
-        errorMessage: (err as Error).message,
+        status: failure.status,
+        errorMessage: failure.message,
         recipientRole: 'patient',
         recipientName: patientName,
         recipientPhone: patientPhone,
@@ -468,14 +467,15 @@ async function confirmAppointmentFromDashboard(appointmentId: string): Promise<R
       })
       results.assignedDoctorWhatsapp = true
     } catch (err) {
+      const failure = notificationFailureFromError(err)
       await logNotification({
         patientId: appointment.patient_id,
         appointmentId,
         notificationType: 'staff_booking_alert',
         channel: 'whatsapp',
         message: `Dashboard assignment alert failed for ${doctor.name ?? 'assigned doctor'}`,
-        status: 'failed',
-        errorMessage: (err as Error).message,
+        status: failure.status,
+        errorMessage: failure.message,
         recipientRole: 'assigned_doctor',
         recipientName: doctor.name ?? 'Assigned doctor',
         recipientPhone: doctor.phone,
@@ -506,14 +506,15 @@ async function confirmAppointmentFromDashboard(appointmentId: string): Promise<R
       })
       results[recipient.role] = true
     } catch (err) {
+      const failure = notificationFailureFromError(err)
       await logNotification({
         patientId: appointment.patient_id,
         appointmentId,
         notificationType: 'staff_booking_alert',
         channel: 'whatsapp',
         message: `Dashboard confirmation alert failed for ${recipient.name}`,
-        status: 'failed',
-        errorMessage: (err as Error).message,
+        status: failure.status,
+        errorMessage: failure.message,
         recipientRole: recipient.role,
         recipientName: recipient.name,
         recipientPhone: recipient.phone,
@@ -523,6 +524,42 @@ async function confirmAppointmentFromDashboard(appointmentId: string): Promise<R
   }
 
   return { confirmed: true, appointmentId, calendarStatus, calendarError, results }
+}
+
+function notificationFailureFromError(err: unknown): { status: NotificationStatus; message: string } {
+  const message = err instanceof Error ? err.message : String(err)
+  if (isTwilioDailyLimitError(message)) {
+    return {
+      status: 'pending',
+      message: 'WhatsApp delivery is queued. The Twilio daily message limit has been reached; retry after the limit resets or after the hospital sender is upgraded.',
+    }
+  }
+
+  return { status: 'failed', message }
+}
+
+function isTwilioDailyLimitError(message: string): boolean {
+  return message.includes('63038') || message.toLowerCase().includes('daily messages limit')
+}
+
+function buildDashboardConfirmationReason(reason: string | null, calendarStatus: string | null): string {
+  const baseParts = (reason ?? 'Confirmed from Serenity AI dashboard')
+    .split(' | ')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => {
+      const normalized = part.toLowerCase()
+      return !normalized.startsWith('calendar status:')
+        && !normalized.startsWith('calendar error:')
+        && !normalized.startsWith('calendar note:')
+        && !normalized.includes('google calendar availability check failed')
+    })
+
+  const status = calendarStatus === 'synced'
+    ? 'synced'
+    : calendarStatus ?? 'needs review'
+
+  return [...baseParts, `Calendar status: ${status}`].join(' | ')
 }
 
 function getDashboardConfirmationStaffRecipients(): StaffRecipient[] {
