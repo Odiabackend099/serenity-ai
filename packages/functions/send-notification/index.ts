@@ -269,6 +269,11 @@ serve(async (req: Request) => {
 
 type NotificationChannel = 'whatsapp' | 'sms' | 'email'
 type NotificationStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'failed'
+type StaffRecipient = {
+  role: 'operations_manager' | 'primary_doctor'
+  name: string
+  phone: string
+}
 
 async function confirmAppointmentFromDashboard(appointmentId: string): Promise<Record<string, unknown>> {
   const supabase = getSupabaseClient()
@@ -481,7 +486,62 @@ async function confirmAppointmentFromDashboard(appointmentId: string): Promise<R
     results.assignedDoctorWhatsapp = 'skipped'
   }
 
+  for (const recipient of getDashboardConfirmationStaffRecipients()) {
+    try {
+      const sid = await sendTextMessage(
+        recipient.phone,
+        `Serenity AI appointment confirmed from dashboard.\n\n${recipient.role === 'operations_manager' ? 'Action complete: appointment has been assigned/confirmed.' : 'For oversight: appointment has been assigned/confirmed by operations.'}\n\nPatient: ${patientName}\nPhone: ${patientPhone || 'Not provided'}\nService: ${serviceType}\nDate: ${appointmentDate}\nTime: ${appointmentTime}\nCenter: ${center}\nDoctor: ${doctorName}`,
+      )
+      await logNotification({
+        patientId: appointment.patient_id,
+        appointmentId,
+        notificationType: 'staff_booking_alert',
+        channel: 'whatsapp',
+        message: `Dashboard confirmation alert sent to ${recipient.name}`,
+        status: 'sent',
+        externalMessageId: sid,
+        recipientRole: recipient.role,
+        recipientName: recipient.name,
+        recipientPhone: recipient.phone,
+      })
+      results[recipient.role] = true
+    } catch (err) {
+      await logNotification({
+        patientId: appointment.patient_id,
+        appointmentId,
+        notificationType: 'staff_booking_alert',
+        channel: 'whatsapp',
+        message: `Dashboard confirmation alert failed for ${recipient.name}`,
+        status: 'failed',
+        errorMessage: (err as Error).message,
+        recipientRole: recipient.role,
+        recipientName: recipient.name,
+        recipientPhone: recipient.phone,
+      })
+      results[recipient.role] = false
+    }
+  }
+
   return { confirmed: true, appointmentId, calendarStatus, calendarError, results }
+}
+
+function getDashboardConfirmationStaffRecipients(): StaffRecipient[] {
+  return [
+    {
+      role: 'operations_manager',
+      name: Deno.env.get('OPERATIONS_MANAGER_NAME') ?? 'Abdullahi Rahinatu',
+      phone: Deno.env.get('OPERATIONS_MANAGER_WHATSAPP') ?? '+2348072023652',
+    },
+    {
+      role: 'primary_doctor',
+      name: Deno.env.get('PRIMARY_DOCTOR_NAME') ?? 'Dr. Adekunle Adesina',
+      phone: Deno.env.get('PRIMARY_DOCTOR_WHATSAPP') ??
+        Deno.env.get('HOSPITAL_MD_WHATSAPP') ??
+        Deno.env.get('HOSPITAL_MD_PHONE') ??
+        Deno.env.get('HOSPITAL_PHONE_PRIMARY') ??
+        '+2348062197384',
+    },
+  ]
 }
 
 async function hasAppointmentDbConflict(params: {
