@@ -104,20 +104,20 @@ export default function Sidebar({ emergencyCount = 0 }: { emergencyCount?: numbe
   }
 
   return (
-    <aside className="w-64 bg-serenity-900 text-white flex flex-col h-full">
+    <aside className="w-64 bg-serenity-950 text-white flex flex-col h-full">
       {/* Logo */}
-      <div className="p-6 border-b border-serenity-800">
+      <div className="p-6 border-b border-serenity-800/80">
         <div className="flex items-center gap-3">
           <Image
             src="/brand/serenity-royale-logo.png"
             alt="Serenity Royale Hospital logo"
             width={40}
             height={40}
-            className="w-10 h-10 rounded-lg object-cover bg-white flex-shrink-0"
+            className="w-10 h-10 rounded-lg object-cover bg-serenity-950 border border-gold-400/40 flex-shrink-0"
           />
           <div>
             <p className="font-bold text-sm leading-tight">Serenity Royale</p>
-            <p className="text-serenity-400 text-xs">Admin Dashboard</p>
+            <p className="text-gold-300 text-xs">Admin Dashboard</p>
           </div>
         </div>
       </div>
@@ -132,7 +132,7 @@ export default function Sidebar({ emergencyCount = 0 }: { emergencyCount?: numbe
               href={item.href}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                 isActive
-                  ? 'bg-teal-500 text-white'
+                  ? 'bg-gold-400 text-serenity-950'
                   : 'text-serenity-300 hover:bg-serenity-800 hover:text-white'
               }`}
             >
@@ -150,16 +150,16 @@ export default function Sidebar({ emergencyCount = 0 }: { emergencyCount?: numbe
       </nav>
 
       {/* Hospital Info */}
-      <div className="p-4 border-t border-serenity-800">
+      <div className="p-4 border-t border-serenity-800/80">
         <div className="flex items-center gap-2 mb-2">
           <Image
             src="/brand/serenity-royale-logo.png"
             alt=""
             width={28}
             height={28}
-            className="w-7 h-7 rounded object-cover bg-white"
+            className="w-7 h-7 rounded object-cover bg-serenity-950 border border-gold-400/30"
           />
-          <p className="text-serenity-300 text-xs font-medium">Serenity Royale Hospital</p>
+          <p className="text-serenity-200 text-xs font-medium">Serenity Royale Hospital</p>
         </div>
         <p className="text-serenity-300 text-xs">Abuja, Nigeria</p>
         <button

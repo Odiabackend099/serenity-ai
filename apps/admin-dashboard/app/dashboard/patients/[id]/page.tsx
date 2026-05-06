@@ -8,18 +8,19 @@ export default async function PatientDetailPage({
   params,
   searchParams,
 }: {
-  params: { id: string }
-  searchParams: { convPage?: string; tab?: string }
+  params: Promise<{ id: string }>
+  searchParams: Promise<{ convPage?: string; tab?: string }>
 }) {
   const supabase = await createServerSupabaseClient()
-  const convPage = Math.max(1, parseInt(searchParams.convPage ?? '1', 10))
+  const [resolvedParams, resolvedSearchParams] = await Promise.all([params, searchParams])
+  const convPage = Math.max(1, parseInt(resolvedSearchParams.convPage ?? '1', 10))
   const convPerPage = 20
   const convOffset = (convPage - 1) * convPerPage
 
   const { data: patient } = await supabase
     .from('patients')
     .select('*, consent_log(*), deletion_requests(*)')
-    .eq('id', params.id)
+    .eq('id', resolvedParams.id)
     .single()
 
   if (!patient) notFound()
@@ -27,20 +28,20 @@ export default async function PatientDetailPage({
   const { data: conversations, count: convCount } = await supabase
     .from('conversations')
     .select('*', { count: 'exact' })
-    .eq('patient_id', params.id)
+    .eq('patient_id', resolvedParams.id)
     .order('created_at', { ascending: false })
     .range(convOffset, convOffset + convPerPage - 1)
 
   const { data: appointments } = await supabase
     .from('appointments')
     .select('*, doctors(name)')
-    .eq('patient_id', params.id)
+    .eq('patient_id', resolvedParams.id)
     .order('appointment_date', { ascending: false })
 
   const { data: emergencyAlerts } = await supabase
     .from('emergency_alerts')
     .select('*')
-    .eq('patient_id', params.id)
+    .eq('patient_id', resolvedParams.id)
     .order('created_at', { ascending: false })
 
   const consents = patient.consent_log as Array<{ consent_given: boolean; created_at: string }> | null
@@ -296,13 +297,13 @@ export default async function PatientDetailPage({
                   <p className="text-xs text-gray-500">Page {convPage} of {totalConvPages}</p>
                   <div className="flex gap-2">
                     {convPage > 1 && (
-                      <a href={`/dashboard/patients/${params.id}?convPage=${convPage - 1}`}
+                      <a href={`/dashboard/patients/${resolvedParams.id}?convPage=${convPage - 1}`}
                         className="px-3 py-1 bg-white border border-gray-200 rounded text-xs text-gray-700 hover:bg-gray-50">
                         Previous
                       </a>
                     )}
                     {convPage < totalConvPages && (
-                      <a href={`/dashboard/patients/${params.id}?convPage=${convPage + 1}`}
+                      <a href={`/dashboard/patients/${resolvedParams.id}?convPage=${convPage + 1}`}
                         className="px-3 py-1 bg-white border border-gray-200 rounded text-xs text-gray-700 hover:bg-gray-50">
                         Next
                       </a>

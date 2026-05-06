@@ -8,8 +8,12 @@
  */
 
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
-import { getSupabaseClient, upsertPatient } from '../_shared/supabase.ts'
+import { getSupabaseClient, getSupabaseServiceRoleKey, getSupabaseUrl, upsertPatient } from '../_shared/supabase.ts'
 import { verifyTwilioWebhookSignature } from '../_shared/whatsapp.ts'
+
+type EdgeRuntimeLike = {
+  waitUntil?: (promise: Promise<unknown>) => void
+}
 
 serve(async (req: Request) => {
   if (req.method !== 'POST') {
@@ -35,10 +39,15 @@ serve(async (req: Request) => {
     return new Response('Unauthorized', { status: 401 })
   }
 
-  const processing = processTwilioMessage(params).catch((err) => {
+  try {
+    const queueItemId = await processTwilioMessage(params)
+    if (queueItemId) {
+      runInBackground(triggerAiAssistant(queueItemId))
+    }
+  } catch (err) {
     console.error('[webhook] Twilio processing error:', err)
-  })
-  void processing
+    throw err
+  }
 
   return new Response('<Response></Response>', {
     status: 200,
@@ -46,7 +55,7 @@ serve(async (req: Request) => {
   })
 })
 
-async function processTwilioMessage(params: URLSearchParams): Promise<void> {
+async function processTwilioMessage(params: URLSearchParams): Promise<string | null> {
   const supabase = getSupabaseClient()
 
   const fromRaw = params.get('From') ?? ''
@@ -72,12 +81,12 @@ async function processTwilioMessage(params: URLSearchParams): Promise<void> {
 
   if (existing) {
     console.log(`[webhook] Duplicate Twilio message ${messageSid} — skipping`)
-    return
+    return null
   }
 
   const patient = await upsertPatient(supabase, phoneNumber, contactName)
 
-  const { error } = await supabase.from('message_queue').insert({
+  const { data: queued, error } = await supabase.from('message_queue').insert({
     patient_id: patient.id,
     patient_phone: phoneNumber,
     phone_number: phoneNumber,
@@ -90,14 +99,60 @@ async function processTwilioMessage(params: URLSearchParams): Promise<void> {
     status: 'queued',
     retry_count: 0,
     next_retry_at: new Date().toISOString(),
-  })
+  }).select('id').single()
 
-  if (error) {
-    console.error(`[webhook] Failed to queue Twilio message ${messageSid}:`, error.message)
-    throw error
+  if (error || !queued) {
+    const message = error?.message ?? 'insert returned no queue row'
+    console.error(`[webhook] Failed to queue Twilio message ${messageSid}:`, message)
+    throw error ?? new Error(message)
   }
 
-  console.log(`[webhook] Queued Twilio message ${messageSid} from ${phoneNumber} (patient: ${patient.id})`)
+  console.log(`[webhook] Queued Twilio message ${messageSid} from ${phoneNumber} (patient: ${patient.id}, queue: ${queued.id})`)
+  return queued.id
+}
+
+async function triggerAiAssistant(queueItemId: string): Promise<void> {
+  const supabaseUrl = getSupabaseUrl()
+  const serviceRoleKey = getSupabaseServiceRoleKey()
+  const internalSecret = Deno.env.get('INTERNAL_FUNCTION_SECRET')
+  const authorizationToken = internalSecret ?? serviceRoleKey
+
+  if (!supabaseUrl || !authorizationToken) {
+    console.warn('[webhook] Immediate AI trigger skipped — missing Supabase URL or internal authorization secret')
+    return
+  }
+
+  const res = await fetch(`${supabaseUrl.replace(/\/+$/, '')}/functions/v1/ai-assistant`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${authorizationToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ queueItemId }),
+  })
+
+  if (!res.ok) {
+    const err = await res.text()
+    console.error(`[webhook] Immediate AI trigger failed (${res.status}): ${err.slice(0, 500)}`)
+    return
+  }
+
+  console.log(`[webhook] Immediate AI trigger accepted for queue ${queueItemId}`)
+}
+
+function runInBackground(promise: Promise<unknown>): void {
+  const edgeRuntime = (globalThis as typeof globalThis & { EdgeRuntime?: EdgeRuntimeLike }).EdgeRuntime
+
+  if (edgeRuntime?.waitUntil) {
+    edgeRuntime.waitUntil(promise.catch((err) => {
+      console.error('[webhook] Background task failed:', err)
+    }))
+    return
+  }
+
+  void promise.catch((err) => {
+    console.error('[webhook] Background task failed:', err)
+  })
 }
 
 function getTwilioMessageType(mimeType: string | null, body: string | null): string {

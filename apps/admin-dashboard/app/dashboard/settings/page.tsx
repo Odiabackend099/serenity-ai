@@ -39,7 +39,7 @@ export default async function SettingsPage() {
     supabase.from('message_queue').select('*', { count: 'exact', head: true }).in('status', ['queued', 'failed', 'dead_letter']),
     supabase.from('appointments').select('*', { count: 'exact', head: true }).eq('status', 'pending').eq('created_from_whatsapp', true),
     supabase.from('appointments').select('*', { count: 'exact', head: true }).eq('calendar_sync_status', 'synced'),
-    supabase.from('notifications').select('status, error_message, created_at').eq('notification_type', 'staff_booking_alert').eq('channel', 'whatsapp').order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    supabase.from('notifications').select('status, error_message, recipient_role, recipient_name, created_at').eq('notification_type', 'staff_booking_alert').eq('channel', 'whatsapp').eq('recipient_role', 'operations_manager').order('created_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('notifications').select('status, error_message, created_at').eq('channel', 'email').order('created_at', { ascending: false }).limit(1).maybeSingle(),
   ])
 
@@ -67,7 +67,7 @@ export default async function SettingsPage() {
       tone: (calendarSyncedAppointments ?? 0) > 0 ? 'green' : 'amber',
     },
     {
-      label: 'Dr K staff WhatsApp alert',
+      label: 'Abdullahi operations WhatsApp alert',
       value: latestStaffWhatsApp?.status === 'sent' ? 'Sent' : latestStaffWhatsApp?.status === 'failed' ? 'Failed' : 'No proof yet',
       tone: latestStaffWhatsApp?.status === 'sent' ? 'green' : latestStaffWhatsApp?.status === 'failed' ? 'red' : 'amber',
     },
@@ -482,7 +482,7 @@ export default async function SettingsPage() {
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                       user.role === 'super_admin' ? 'bg-purple-100 text-purple-700' :
                       user.role === 'admin' ? 'bg-serenity-100 text-serenity-700' :
-                      user.role === 'doctor' ? 'bg-teal-100 text-teal-700' :
+                      user.role === 'doctor' ? 'bg-gold-100 text-gold-800' :
                       'bg-gray-100 text-gray-600'
                     }`}>
                       {user.role}

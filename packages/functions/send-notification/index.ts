@@ -375,6 +375,9 @@ async function confirmAppointmentFromDashboard(appointmentId: string): Promise<R
         message: `Dashboard confirmation sent to ${patientName}`,
         status: 'sent',
         externalMessageId: sid,
+        recipientRole: 'patient',
+        recipientName: patientName,
+        recipientPhone: patientPhone,
       })
       await supabase
         .from('appointments')
@@ -390,6 +393,9 @@ async function confirmAppointmentFromDashboard(appointmentId: string): Promise<R
         message: `Dashboard confirmation failed for ${patientName}`,
         status: 'failed',
         errorMessage: (err as Error).message,
+        recipientRole: 'patient',
+        recipientName: patientName,
+        recipientPhone: patientPhone,
       })
       results.whatsapp = false
     }
@@ -415,6 +421,9 @@ async function confirmAppointmentFromDashboard(appointmentId: string): Promise<R
         channel: 'email',
         message: `Dashboard confirmation email sent to ${patient.email}`,
         status: 'sent',
+        recipientRole: 'patient',
+        recipientName: patientName,
+        recipientPhone: null,
       })
       results.email = true
     } catch (err) {
@@ -426,6 +435,9 @@ async function confirmAppointmentFromDashboard(appointmentId: string): Promise<R
         message: `Dashboard confirmation email failed for ${patient.email}`,
         status: 'failed',
         errorMessage: (err as Error).message,
+        recipientRole: 'patient',
+        recipientName: patientName,
+        recipientPhone: null,
       })
       results.email = false
     }
@@ -466,6 +478,9 @@ async function logNotification(params: {
   status: NotificationStatus
   externalMessageId?: string
   errorMessage?: string
+  recipientRole?: 'primary_doctor' | 'operations_manager' | 'assigned_doctor' | 'patient' | 'staff_email' | 'on_call_backup'
+  recipientName?: string | null
+  recipientPhone?: string | null
 }): Promise<void> {
   const supabase = getSupabaseClient()
   const { error } = await supabase.from('notifications').insert({
@@ -479,6 +494,9 @@ async function logNotification(params: {
     external_message_id: params.externalMessageId ?? null,
     sent_at: params.status === 'sent' ? new Date().toISOString() : null,
     error_message: params.errorMessage ?? null,
+    recipient_role: params.recipientRole ?? null,
+    recipient_name: params.recipientName ?? null,
+    recipient_phone: params.recipientPhone ?? null,
   })
 
   if (error) console.error('[send-notification] notification log failed:', error.message)

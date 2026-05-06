@@ -17,6 +17,9 @@ type NotificationRow = {
   channel: string | null
   status: string | null
   error_message: string | null
+  recipient_role: string | null
+  recipient_name: string | null
+  recipient_phone: string | null
   created_at: string
 }
 type AppointmentWithRelations = {
@@ -43,16 +46,17 @@ const VALID_VIEWS: View[] = ['upcoming', 'pending', 'confirmed', 'whatsapp', 'ca
 export default async function AppointmentsPage({
   searchParams,
 }: {
-  searchParams: { view?: string; appointment?: string }
+  searchParams: Promise<{ view?: string; appointment?: string }>
 }) {
-  const view = VALID_VIEWS.includes(searchParams.view as View) ? (searchParams.view as View) : 'upcoming'
-  const highlightedAppointment = searchParams.appointment
+  const resolvedSearchParams = await searchParams
+  const view = VALID_VIEWS.includes(resolvedSearchParams.view as View) ? (resolvedSearchParams.view as View) : 'upcoming'
+  const highlightedAppointment = resolvedSearchParams.appointment
   const supabase = await createServerSupabaseClient()
   const today = new Date().toISOString().split('T')[0]
 
   let query = supabase
     .from('appointments')
-    .select('*, patients(id, name, phone_number, email), doctors(name, speciality), notifications(notification_type, channel, status, error_message, created_at)')
+    .select('*, patients(id, name, phone_number, email), doctors(name, speciality), notifications(notification_type, channel, status, error_message, recipient_role, recipient_name, recipient_phone, created_at)')
     .order('appointment_date', { ascending: view !== 'past' })
     .order('appointment_time', { ascending: view !== 'past' })
     .limit(200)
@@ -198,7 +202,9 @@ function AppointmentCard({
   const isUpcoming = appointment.appointment_date >= today
   const canRemind = isUpcoming && appointment.status === 'confirmed'
   const patientWhatsapp = latestNotification(appointment, 'appointment_confirmation', 'whatsapp')
-  const staffWhatsapp = latestNotification(appointment, 'staff_booking_alert', 'whatsapp')
+  const operationsWhatsapp = latestNotification(appointment, 'staff_booking_alert', 'whatsapp', 'operations_manager')
+  const primaryDoctorWhatsapp = latestNotification(appointment, 'staff_booking_alert', 'whatsapp', 'primary_doctor')
+  const assignedDoctorWhatsapp = latestNotification(appointment, 'staff_booking_alert', 'whatsapp', 'assigned_doctor')
   const email = latestNotification(appointment, null, 'email')
   const emailStatus: NotificationStatus = email ? normalizeNotificationStatus(email.status) : patient?.email ? 'none' : 'skipped'
 
@@ -209,7 +215,7 @@ function AppointmentCard({
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-lg font-bold tabular-nums text-serenity-800">{appointment.appointment_time?.slice(0, 5) ?? '--:--'}</p>
             <StatusBadge status={appointment.status} />
-            {appointment.status === 'pending' && <Badge tone="amber">Needs confirmation</Badge>}
+            {appointment.status === 'pending' && <Badge tone="amber">Awaiting secretary review</Badge>}
             {appointment.created_from_whatsapp && <Badge tone="green">WhatsApp AI</Badge>}
           </div>
 
@@ -235,7 +241,7 @@ function AppointmentCard({
             <p className="mt-1 max-w-3xl text-xs text-gray-400 break-words">{appointment.reason}</p>
           )}
 
-          <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-6">
             <ProofBadge
               label="Calendar"
               status={calendarStatus(appointment.calendar_sync_status)}
@@ -247,9 +253,19 @@ function AppointmentCard({
               detail={patientWhatsapp?.error_message ?? patientWhatsapp?.status ?? 'No confirmation WhatsApp logged yet'}
             />
             <ProofBadge
-              label="Staff WhatsApp"
-              status={normalizeNotificationStatus(staffWhatsapp?.status)}
-              detail={staffWhatsapp?.error_message ?? staffWhatsapp?.status ?? 'No staff WhatsApp alert logged yet'}
+              label="Ops contact"
+              status={normalizeNotificationStatus(operationsWhatsapp?.status)}
+              detail={formatNotificationDetail(operationsWhatsapp, 'No Abdullahi operations alert logged yet')}
+            />
+            <ProofBadge
+              label="Dr K oversight"
+              status={normalizeNotificationStatus(primaryDoctorWhatsapp?.status)}
+              detail={formatNotificationDetail(primaryDoctorWhatsapp, 'No Dr K oversight alert logged yet')}
+            />
+            <ProofBadge
+              label="Assigned doctor"
+              status={assignedDoctorWhatsapp ? normalizeNotificationStatus(assignedDoctorWhatsapp.status) : appointment.doctors?.name ? 'none' : 'skipped'}
+              detail={formatNotificationDetail(assignedDoctorWhatsapp, appointment.doctors?.name ? 'No assigned doctor alert logged yet' : 'No assigned doctor')}
             />
             <ProofBadge
               label="Email"
@@ -300,11 +316,18 @@ function AppointmentCard({
   )
 }
 
-function latestNotification(appointment: AppointmentWithRelations, type: string | null, channel: string) {
+function latestNotification(appointment: AppointmentWithRelations, type: string | null, channel: string, recipientRole?: string) {
   const notifications = appointment.notifications ?? []
   return notifications
-    .filter((notification) => notification.channel === channel && (!type || notification.notification_type === type))
+    .filter((notification) => notification.channel === channel && (!type || notification.notification_type === type) && (!recipientRole || notification.recipient_role === recipientRole))
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
+}
+
+function formatNotificationDetail(notification: NotificationRow | undefined, fallback: string): string {
+  if (!notification) return fallback
+  const recipient = [notification.recipient_name, notification.recipient_phone].filter(Boolean).join(' · ')
+  const status = notification.error_message ?? notification.status ?? 'No status'
+  return recipient ? `${recipient}: ${status}` : status
 }
 
 function normalizeNotificationStatus(status?: string | null): NotificationStatus {

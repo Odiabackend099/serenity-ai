@@ -5,11 +5,12 @@ import Link from 'next/link'
 export default async function PatientsPage({
   searchParams,
 }: {
-  searchParams: { q?: string; page?: string }
+  searchParams: Promise<{ q?: string; page?: string }>
 }) {
   const supabase = await createServerSupabaseClient()
-  const search = searchParams.q ?? ''
-  const page = parseInt(searchParams.page ?? '1', 10)
+  const resolvedSearchParams = await searchParams
+  const search = resolvedSearchParams.q ?? ''
+  const page = parseInt(resolvedSearchParams.page ?? '1', 10)
   const perPage = 25
   const offset = (page - 1) * perPage
 

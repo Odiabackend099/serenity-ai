@@ -30,8 +30,8 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-serenity-900 to-teal-800">
-      <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
+    <div className="min-h-screen flex items-center justify-center bg-[radial-gradient(circle_at_top,_#1f2a44_0%,_#070d24_45%,_#020617_100%)] px-4">
+      <div className="bg-white rounded-lg shadow-2xl p-8 w-full max-w-md border border-gold-100">
         {/* Logo */}
         <div className="text-center mb-8">
           <Image
@@ -39,7 +39,7 @@ export default function LoginPage() {
             alt="Serenity Royale Hospital logo"
             width={80}
             height={80}
-            className="w-20 h-20 rounded-full object-cover mx-auto mb-4 border border-gray-100 shadow-sm"
+            className="w-20 h-20 rounded-lg object-cover mx-auto mb-4 border border-gold-200 shadow-sm bg-serenity-950"
           />
           <h1 className="text-2xl font-bold text-gray-900">Serenity Royale Hospital</h1>
           <p className="text-gray-500 text-sm mt-1">Serenity Royale Hospital Admin</p>
@@ -61,7 +61,7 @@ export default function LoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-serenity-500 focus:border-serenity-500 outline-none transition"
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gold-400 focus:border-gold-500 outline-none transition"
               placeholder="admin@serenityroyalehospital.com"
             />
           </div>
@@ -75,7 +75,7 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-serenity-500 focus:border-serenity-500 outline-none transition"
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gold-400 focus:border-gold-500 outline-none transition"
               placeholder="••••••••"
             />
           </div>
@@ -83,7 +83,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2.5 bg-serenity-600 hover:bg-serenity-700 disabled:bg-serenity-300 text-white font-medium rounded-lg transition"
+            className="w-full py-2.5 bg-gold-500 hover:bg-gold-400 disabled:bg-gold-200 text-serenity-950 font-semibold rounded-lg transition"
           >
             {loading ? 'Signing in...' : 'Sign In'}
           </button>

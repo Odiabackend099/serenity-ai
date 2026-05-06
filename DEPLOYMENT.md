@@ -99,9 +99,11 @@ AI_PROVIDER=groq
 GROQ_API_KEY=your_groq_api_key
 GROQ_BASE_URL=https://api.groq.com/openai/v1
 GROQ_MODEL=llama-3.3-70b-versatile
+GROQ_MAX_TOKENS=240
+GROQ_TIMEOUT_MS=8500
 
 # Deepgram (Speech-to-Text)
-DEEPGRAM_API_KEY=c0f60c39e1994c1c708649f89d37f3873c88974e
+DEEPGRAM_API_KEY=YOUR_DEEPGRAM_API_KEY
 
 # Google Calendar
 GOOGLE_SERVICE_ACCOUNT_JSON={"client_email":"...","private_key":"..."}
@@ -114,6 +116,10 @@ SMTP_API_KEY=your_smtp2go_api_key
 SMTP_USER=info@serenityroyalehospital.com
 STAFF_BOOKING_EMAIL_TO=info@serenityroyalehospital.com
 STAFF_BOOKING_WHATSAPP_TO=+2348062197384
+PRIMARY_DOCTOR_NAME=Dr. Adekunle Adesina
+PRIMARY_DOCTOR_WHATSAPP=+2348062197384
+OPERATIONS_MANAGER_NAME=Abdullahi Rahinatu
+OPERATIONS_MANAGER_WHATSAPP=+2348072023652
 BOOKING_NOTIFY_WHATSAPP_ENABLED=true
 BOOKING_NOTIFY_EMAIL_ENABLED=true
 
@@ -415,6 +421,9 @@ UPDATE message_queue SET status = 'queued', retry_count = 0 WHERE status = 'dead
 | `GROQ_API_KEY` | ✅ | Groq API key |
 | `GROQ_BASE_URL` | ✅ | `https://api.groq.com/openai/v1` |
 | `GROQ_MODEL` | ✅ | `llama-3.3-70b-versatile` |
+| `GROQ_MAX_TOKENS` | ✅ | `240` for faster WhatsApp replies |
+| `GROQ_TIMEOUT_MS` | ✅ | `8500` to fail slow general-AI calls safely |
+| `INTERNAL_FUNCTION_SECRET` | ✅ | Shared secret for immediate webhook-to-worker processing |
 | `DEEPGRAM_API_KEY` | ✅ | Deepgram API key |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | ✅ | Google service account JSON (full) |
 | `GOOGLE_CALENDAR_ID` | ✅ | Google Calendar ID |
@@ -425,7 +434,11 @@ UPDATE message_queue SET status = 'queued', retry_count = 0 WHERE status = 'dead
 | `TWILIO_PHONE_NUMBER` | ✅ | Twilio from number |
 | `TWILIO_WHATSAPP_NUMBER` | ✅ | Twilio WhatsApp sender, including Sandbox number |
 | `TWILIO_WEBHOOK_URL` | ✅ | Exact public webhook URL used for signature validation |
-| `STAFF_BOOKING_WHATSAPP_TO` | ✅ | Dr K WhatsApp number for new booking alerts |
+| `STAFF_BOOKING_WHATSAPP_TO` | ✅ | Legacy fallback for staff booking alerts |
+| `PRIMARY_DOCTOR_NAME` | ✅ | `Dr. Adekunle Adesina` |
+| `PRIMARY_DOCTOR_WHATSAPP` | ✅ | Dr K WhatsApp number for clinical oversight alerts |
+| `OPERATIONS_MANAGER_NAME` | ✅ | `Abdullahi Rahinatu` |
+| `OPERATIONS_MANAGER_WHATSAPP` | ✅ | Secretary/operations WhatsApp number for action-required alerts |
 | `STAFF_BOOKING_EMAIL_TO` | ✅ | Comma-separated staff email recipients for booking alerts |
 | `HOSPITAL_PHONE_PRIMARY` | ✅ | `+2348062197384` |
 | `HOSPITAL_EMAIL` | ✅ | `info@serenityroyalehospital.com` |

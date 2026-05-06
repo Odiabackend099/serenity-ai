@@ -17,19 +17,20 @@ const ACTION_COLORS: Record<string, string> = {
 export default async function AuditLogPage({
   searchParams,
 }: {
-  searchParams: {
+  searchParams: Promise<{
     page?: string
     action?: string
     resource?: string
     from?: string
     to?: string
-  }
+  }>
 }) {
   const supabase = await createServerSupabaseClient()
-  const page = Math.max(1, parseInt(searchParams.page ?? '1', 10))
+  const resolvedSearchParams = await searchParams
+  const page = Math.max(1, parseInt(resolvedSearchParams.page ?? '1', 10))
   const offset = (page - 1) * PER_PAGE
 
-  const { action, resource, from, to } = searchParams
+  const { action, resource, from, to } = resolvedSearchParams
 
   let query = supabase
     .from('audit_log')

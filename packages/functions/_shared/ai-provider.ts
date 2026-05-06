@@ -9,6 +9,8 @@ import type { AIMessage, EmergencyDetection } from './types.ts'
 
 const DEFAULT_GROQ_BASE_URL = 'https://api.groq.com/openai/v1'
 const DEFAULT_GROQ_MODEL = 'llama-3.3-70b-versatile'
+const DEFAULT_MAX_TOKENS = 240
+const DEFAULT_TIMEOUT_MS = 8500
 
 // Dr Ade system prompt — DO NOT change without MD approval
 const DR_ADE_SYSTEM_PROMPT = `You are Dr Ade, the AI-powered receptionist and health assistant for Serenity Royale Hospital in Abuja, Nigeria. You represent the hospital with warmth, professionalism, and cultural sensitivity.
@@ -90,12 +92,14 @@ type ProviderConfig = {
   apiKey: string | null
   maxTokens: number
   temperature: number
+  timeoutMs: number
 }
 
 function getProviderConfig(): ProviderConfig {
   const provider = (Deno.env.get('AI_PROVIDER') ?? 'groq').toLowerCase()
-  const maxTokens = Number(Deno.env.get('AI_MAX_TOKENS') ?? Deno.env.get('GROQ_MAX_TOKENS') ?? '512')
+  const maxTokens = Number(Deno.env.get('AI_MAX_TOKENS') ?? Deno.env.get('GROQ_MAX_TOKENS') ?? String(DEFAULT_MAX_TOKENS))
   const temperature = Number(Deno.env.get('AI_TEMPERATURE') ?? Deno.env.get('GROQ_TEMPERATURE') ?? '0.7')
+  const timeoutMs = Number(Deno.env.get('AI_TIMEOUT_MS') ?? Deno.env.get('GROQ_TIMEOUT_MS') ?? String(DEFAULT_TIMEOUT_MS))
 
   if (provider === 'groq') {
     return {
@@ -105,6 +109,7 @@ function getProviderConfig(): ProviderConfig {
       apiKey: Deno.env.get('GROQ_API_KEY') ?? Deno.env.get('AI_API_KEY') ?? null,
       maxTokens,
       temperature,
+      timeoutMs,
     }
   }
 
@@ -115,6 +120,7 @@ function getProviderConfig(): ProviderConfig {
     apiKey: Deno.env.get('AI_API_KEY') ?? null,
     maxTokens,
     temperature,
+    timeoutMs,
   }
 }
 
@@ -144,20 +150,30 @@ export async function callDrAde(
   ]
 
   try {
-    const res = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: config.model,
-        messages: allMessages,
-        temperature: config.temperature,
-        max_tokens: config.maxTokens,
-        top_p: 0.9,
-      }),
-    })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), config.timeoutMs)
+
+    const res = await (async () => {
+      try {
+        return await fetch(`${config.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${config.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: config.model,
+            messages: allMessages,
+            temperature: config.temperature,
+            max_tokens: config.maxTokens,
+            top_p: 0.9,
+          }),
+          signal: controller.signal,
+        })
+      } finally {
+        clearTimeout(timeout)
+      }
+    })()
 
     if (!res.ok) {
       const err = await res.text()

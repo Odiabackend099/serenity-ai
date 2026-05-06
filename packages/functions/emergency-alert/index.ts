@@ -25,10 +25,17 @@ interface EmergencyPayload {
   severity: 'critical' | 'high' | 'medium'
   keywords: string[]
   messageSnippet: string
+  assignedDoctorName?: string | null
+  assignedDoctorPhone?: string | null
 }
 
-const HOSPITAL_WHATSAPP = Deno.env.get('HOSPITAL_PHONE_PRIMARY') ?? '+2348062197384'
 const HOSPITAL_EMAIL = Deno.env.get('HOSPITAL_EMAIL') ?? 'info@serenityroyalehospital.com'
+
+type EmergencyRecipient = {
+  role: 'operations_manager' | 'primary_doctor' | 'assigned_doctor'
+  name: string
+  phone: string
+}
 
 serve(async (req: Request) => {
   if (!isAuthorizedInternalRequest(req)) {
@@ -86,10 +93,33 @@ serve(async (req: Request) => {
   const timestamp = new Date().toLocaleString('en-NG', { timeZone: 'Africa/Lagos' }) + ' WAT'
   const alertTypeDisplay = payload.alertType.replace('_', ' ').toUpperCase()
 
-  // ── Multi-channel notification — all parallel ─────────────────────────────
+  // ── Multi-channel notification — WhatsApp + email immediately ─────────────
+  // SMS remains reserved for escalation fallback in escalation-check.
+  const whatsappRecipients = getEmergencyRecipients(payload)
   const notifications = await Promise.allSettled([
-    // 1. WhatsApp to hospital admin
-    notifyWhatsApp(payload, alertTypeDisplay, timestamp).then(async () => {
+    // 1. WhatsApp to operations, primary doctor, and selected doctor when known
+    Promise.all(whatsappRecipients.map((recipient) => notifyWhatsApp(recipient, payload, alertTypeDisplay, timestamp)
+      .then(async (sid) => {
+        await logEmergencyNotification(supabase, {
+          patientId: payload.patientId,
+          emergencyAlertId: alert.id,
+          recipient,
+          message: `Emergency WhatsApp sent to ${recipient.name}`,
+          status: 'sent',
+          externalMessageId: sid,
+        })
+      })
+      .catch(async (err) => {
+        await logEmergencyNotification(supabase, {
+          patientId: payload.patientId,
+          emergencyAlertId: alert.id,
+          recipient,
+          message: `Emergency WhatsApp failed for ${recipient.name}`,
+          status: 'failed',
+          errorMessage: (err as Error).message,
+        })
+        throw err
+      }))).then(async () => {
       await supabase
         .from('emergency_alerts')
         .update({ whatsapp_notified_at: new Date().toISOString() })
@@ -106,18 +136,36 @@ serve(async (req: Request) => {
       messageSnippet: payload.messageSnippet,
       timestamp,
     }).then(async () => {
+      await supabase.from('notifications').insert({
+        patient_id: payload.patientId,
+        emergency_alert_id: alert.id,
+        notification_type: 'emergency_alert',
+        channel: 'email',
+        template_name: 'emergency_alert',
+        message_content: `Emergency email sent for ${payload.patientName || payload.phoneNumber}`,
+        status: 'sent',
+        sent_at: new Date().toISOString(),
+        recipient_role: 'staff_email',
+        recipient_name: 'Hospital emergency email recipients',
+      })
       await supabase
         .from('emergency_alerts')
         .update({ email_notified_at: new Date().toISOString() })
         .eq('id', alert.id)
-    }),
-
-    // 3. SMS via Twilio
-    sendSmsAlert(payload, alertTypeDisplay).then(async () => {
-      await supabase
-        .from('emergency_alerts')
-        .update({ sms_notified_at: new Date().toISOString() })
-        .eq('id', alert.id)
+    }).catch(async (err) => {
+      await supabase.from('notifications').insert({
+        patient_id: payload.patientId,
+        emergency_alert_id: alert.id,
+        notification_type: 'emergency_alert',
+        channel: 'email',
+        template_name: 'emergency_alert',
+        message_content: `Emergency email failed for ${payload.patientName || payload.phoneNumber}`,
+        status: 'failed',
+        error_message: (err as Error).message,
+        recipient_role: 'staff_email',
+        recipient_name: 'Hospital emergency email recipients',
+      })
+      throw err
     }),
   ])
 
@@ -125,10 +173,10 @@ serve(async (req: Request) => {
   const results = {
     whatsapp: notifications[0].status === 'fulfilled',
     email: notifications[1].status === 'fulfilled',
-    sms: notifications[2].status === 'fulfilled',
+    sms: 'reserved_for_escalation',
   }
 
-  const channelNames = ['whatsapp', 'email', 'sms']
+  const channelNames = ['whatsapp', 'email']
   for (let i = 0; i < notifications.length; i++) {
     const settled = notifications[i]
     if (settled.status === 'rejected') {
@@ -159,14 +207,14 @@ serve(async (req: Request) => {
  * Send WhatsApp notification to hospital admin.
  */
 async function notifyWhatsApp(
+  recipient: EmergencyRecipient,
   payload: EmergencyPayload,
   alertTypeDisplay: string,
   timestamp: string,
-): Promise<void> {
-  const adminPhone = HOSPITAL_WHATSAPP.replace('+', '')
-
+): Promise<string> {
   const message = `🚨 *EMERGENCY ALERT — ${alertTypeDisplay}*
 
+*Recipient:* ${recipient.name} (${recipient.role.replace('_', ' ')})
 *Patient:* ${payload.patientName || 'Unknown'}
 *Phone:* ${payload.phoneNumber}
 *Severity:* ${payload.severity.toUpperCase()}
@@ -179,43 +227,66 @@ _"${payload.messageSnippet.slice(0, 150)}"_
 ⚠️ Immediate action required. Log in to admin dashboard to acknowledge.
 👉 Call patient: ${payload.phoneNumber}`
 
-  await sendTextMessage(adminPhone, message)
+  return await sendTextMessage(recipient.phone, message)
 }
 
-/**
- * Send SMS alert via Twilio REST API.
- */
-async function sendSmsAlert(payload: EmergencyPayload, alertTypeDisplay: string): Promise<void> {
-  const accountSid = Deno.env.get('TWILIO_ACCOUNT_SID')
-  const authToken = Deno.env.get('TWILIO_AUTH_TOKEN')
-  const fromPhone = Deno.env.get('TWILIO_PHONE_NUMBER')
-  const toPhone = Deno.env.get('HOSPITAL_PHONE_PRIMARY') ?? HOSPITAL_WHATSAPP
+function getEmergencyRecipients(payload: EmergencyPayload): EmergencyRecipient[] {
+  const operationsPhone = Deno.env.get('OPERATIONS_MANAGER_WHATSAPP') ?? '+2348072023652'
+  const operationsName = Deno.env.get('OPERATIONS_MANAGER_NAME') ?? 'Abdullahi Rahinatu'
+  const primaryPhone = Deno.env.get('PRIMARY_DOCTOR_WHATSAPP') ??
+    Deno.env.get('HOSPITAL_MD_WHATSAPP') ??
+    Deno.env.get('HOSPITAL_MD_PHONE') ??
+    Deno.env.get('HOSPITAL_PHONE_PRIMARY') ??
+    '+2348062197384'
+  const primaryName = Deno.env.get('PRIMARY_DOCTOR_NAME') ?? 'Dr. Adekunle Adesina'
 
-  if (!accountSid || !authToken || !fromPhone) {
-    console.warn('[emergency-alert] Twilio not configured — SMS skipped')
-    return
+  const recipients: EmergencyRecipient[] = [
+    { role: 'operations_manager', name: operationsName, phone: operationsPhone },
+    { role: 'primary_doctor', name: primaryName, phone: primaryPhone },
+  ]
+
+  if (payload.assignedDoctorPhone && !isSamePhone(payload.assignedDoctorPhone, operationsPhone) && !isSamePhone(payload.assignedDoctorPhone, primaryPhone)) {
+    recipients.push({
+      role: 'assigned_doctor',
+      name: payload.assignedDoctorName ?? 'Assigned doctor',
+      phone: payload.assignedDoctorPhone,
+    })
   }
 
-  const body = `SERENITY EMERGENCY: ${alertTypeDisplay} alert for ${payload.patientName || payload.phoneNumber}. Call immediately: ${payload.phoneNumber}. Severity: ${payload.severity.toUpperCase()}`
+  return recipients
+}
 
-  const res = await fetch(
-    `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${btoa(`${accountSid}:${authToken}`)}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        From: fromPhone,
-        To: toPhone,
-        Body: body,
-      }),
-    }
-  )
+function isSamePhone(a: string, b: string): boolean {
+  return a.replace(/\D/g, '') === b.replace(/\D/g, '')
+}
 
-  if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`Twilio SMS failed: ${err}`)
-  }
+async function logEmergencyNotification(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  params: {
+    patientId: string
+    emergencyAlertId: string
+    recipient: EmergencyRecipient
+    message: string
+    status: 'sent' | 'failed'
+    externalMessageId?: string
+    errorMessage?: string
+  },
+): Promise<void> {
+  const { error } = await supabase.from('notifications').insert({
+    patient_id: params.patientId,
+    emergency_alert_id: params.emergencyAlertId,
+    notification_type: 'emergency_alert',
+    channel: 'whatsapp',
+    template_name: 'emergency_alert',
+    message_content: params.message.slice(0, 2000),
+    status: params.status,
+    external_message_id: params.externalMessageId ?? null,
+    error_message: params.errorMessage ?? null,
+    sent_at: params.status === 'sent' ? new Date().toISOString() : null,
+    recipient_role: params.recipient.role,
+    recipient_name: params.recipient.name,
+    recipient_phone: params.recipient.phone,
+  })
+
+  if (error) console.error('[emergency-alert] notification log failed:', error.message)
 }

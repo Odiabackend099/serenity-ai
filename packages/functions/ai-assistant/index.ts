@@ -55,11 +55,13 @@ import {
 import type {
   AIMessage,
   BookingSessionRow,
+  MessageQueueRow,
   PatientRow,
 } from '../_shared/types.ts'
 import { BOOKING_STEPS } from '../_shared/types.ts'
 
 const BATCH_SIZE = 5
+const MAX_RETRY_COUNT = 3
 
 const CENTER_ADDRESSES: Record<string, string> = {
   Karu: 'No. 11 Ali Amodu Close (behind CBN Quarters), Karu, Abuja',
@@ -88,41 +90,58 @@ type ValidationResult<T> = {
   error: string | null
 }
 
+type AssistantRequestBody = {
+  queueItemId?: string
+}
+
+type DoctorContact = {
+  id: string
+  name: string
+  phone: string | null
+  location?: string | null
+}
+
+type StaffNotificationRecipient = {
+  role: 'operations_manager' | 'primary_doctor' | 'assigned_doctor'
+  name: string
+  phone: string
+}
+
 serve(async (req: Request) => {
   if (!isAuthorizedInternalRequest(req)) {
     return new Response('Unauthorized', { status: 401 })
   }
 
   const supabase = getSupabaseClient()
+  const requestBody = await parseAssistantRequestBody(req)
   let processed = 0
   let errors = 0
+  let skipped = 0
 
-  const { data: queuedMessages } = await supabase
-    .from('message_queue')
-    .select('*')
-    .eq('status', 'queued')
-    .lte('next_retry_at', new Date().toISOString())
-    .order('created_at', { ascending: true })
-    .limit(BATCH_SIZE)
+  const queuedMessages = await getQueuedMessages(supabase, requestBody.queueItemId)
 
   if (!queuedMessages || queuedMessages.length === 0) {
-    return Response.json({ processed: 0, message: 'No queued messages' })
+    return Response.json({ processed: 0, errors: 0, skipped: 0, message: 'No queued messages' })
   }
 
   for (const queueItem of queuedMessages) {
-    await supabase.from('message_queue').update({ status: 'processing' }).eq('id', queueItem.id)
+    const claimedQueueItem = await claimQueueItem(supabase, queueItem.id)
+    if (!claimedQueueItem) {
+      skipped++
+      continue
+    }
 
     try {
-      await processMessage(supabase, queueItem)
-      await supabase.from('message_queue').update({ status: 'completed' }).eq('id', queueItem.id)
+      await processMessage(supabase, claimedQueueItem)
+      await supabase.from('message_queue').update({ status: 'completed' }).eq('id', claimedQueueItem.id)
       processed++
     } catch (err) {
       const error = err as Error
-      console.error(`[ai-assistant] Failed queue item ${queueItem.id}:`, error.message)
+      console.error(`[ai-assistant] Failed queue item ${claimedQueueItem.id}:`, error.message)
 
-      const retryCount = (queueItem.retry_count ?? 0) + 1
-      if (retryCount >= 3) {
-        await supabase.from('message_queue').update({ status: 'dead_letter', last_error: error.message, retry_count: retryCount }).eq('id', queueItem.id)
+      const retryCount = (claimedQueueItem.retry_count ?? 0) + 1
+      if (retryCount >= MAX_RETRY_COUNT) {
+        await supabase.from('message_queue').update({ status: 'dead_letter', last_error: error.message, retry_count: retryCount }).eq('id', claimedQueueItem.id)
       } else {
         const backoffMs = Math.pow(2, retryCount - 1) * 1000
         await supabase.from('message_queue').update({
@@ -130,14 +149,75 @@ serve(async (req: Request) => {
           last_error: error.message,
           retry_count: retryCount,
           next_retry_at: new Date(Date.now() + backoffMs).toISOString(),
-        }).eq('id', queueItem.id)
+        }).eq('id', claimedQueueItem.id)
       }
       errors++
     }
   }
 
-  return Response.json({ processed, errors, total: queuedMessages.length })
+  return Response.json({ processed, errors, skipped, total: queuedMessages.length, immediate: Boolean(requestBody.queueItemId) })
 })
+
+async function parseAssistantRequestBody(req: Request): Promise<AssistantRequestBody> {
+  const contentType = req.headers.get('content-type') ?? ''
+  if (!contentType.includes('application/json')) return {}
+
+  try {
+    const body = await req.json() as AssistantRequestBody
+    return typeof body.queueItemId === 'string' && body.queueItemId.trim()
+      ? { queueItemId: body.queueItemId.trim() }
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+async function getQueuedMessages(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  queueItemId?: string,
+): Promise<MessageQueueRow[]> {
+  const now = new Date().toISOString()
+
+  if (queueItemId) {
+    const { data, error } = await supabase
+      .from('message_queue')
+      .select('*')
+      .eq('id', queueItemId)
+      .eq('status', 'queued')
+      .lte('next_retry_at', now)
+      .maybeSingle()
+
+    if (error) throw new Error(`Failed to fetch queued message ${queueItemId}: ${error.message}`)
+    return data ? [data as MessageQueueRow] : []
+  }
+
+  const { data, error } = await supabase
+    .from('message_queue')
+    .select('*')
+    .eq('status', 'queued')
+    .lte('next_retry_at', now)
+    .order('created_at', { ascending: true })
+    .limit(BATCH_SIZE)
+
+  if (error) throw new Error(`Failed to fetch queued messages: ${error.message}`)
+  return (data ?? []) as MessageQueueRow[]
+}
+
+async function claimQueueItem(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  queueItemId: string,
+): Promise<MessageQueueRow | null> {
+  const { data, error } = await supabase
+    .from('message_queue')
+    .update({ status: 'processing', last_error: null })
+    .eq('id', queueItemId)
+    .eq('status', 'queued')
+    .select('*')
+    .maybeSingle()
+
+  if (error) throw new Error(`Failed to claim queue item ${queueItemId}: ${error.message}`)
+  return data as MessageQueueRow | null
+}
 
 async function processMessage(
   supabase: ReturnType<typeof getSupabaseClient>,
@@ -245,6 +325,10 @@ async function processMessage(
 
   // ── Emergency handling before booking/AI ─────────────────────────────────
   if (emergencyCheck.isEmergency) {
+    const assignedDoctor = activeBooking?.collected_doctor_preference
+      ? await findPreferredDoctor(supabase, activeBooking.collected_doctor_preference)
+      : null
+
     if (activeBooking) {
       await supabase.from('booking_sessions')
         .update({ status: 'abandoned', abandoned_at: new Date().toISOString(), last_message_at: new Date().toISOString() })
@@ -277,6 +361,8 @@ async function processMessage(
       severity: emergencyCheck.severity!,
       keywords: emergencyCheck.keywordsFound,
       messageSnippet: (messageText ?? '').slice(0, 200),
+      assignedDoctorName: assignedDoctor?.name ?? null,
+      assignedDoctorPhone: assignedDoctor?.phone ?? null,
     })
     return
   }
@@ -701,6 +787,7 @@ async function finalizeBooking(
   const serviceType = normalizeServiceType(session.collected_service_type)
   const doctorName = doctor?.name ?? 'To be assigned'
   const formattedDate = formatDisplayDate(appointmentDate)
+  const doctorCenterMismatch = Boolean(doctor?.location && !doctorServesCenter(doctor.location, center))
   const hasConflict = doctor?.id
     ? await hasDoctorSlotConflict(supabase, doctor.id, appointmentDate, appointmentTime)
     : false
@@ -712,6 +799,9 @@ async function finalizeBooking(
 
   if (!doctor?.id) {
     calendarStatus = 'pending_no_matched_doctor'
+  } else if (doctorCenterMismatch) {
+    calendarStatus = 'pending_doctor_center_mismatch'
+    calendarError = `${doctor.name} is listed for ${doctor.location}, but patient selected ${center}`
   } else if (hasConflict) {
     calendarStatus = 'pending_database_conflict'
   } else if (!isCalendarConfigured()) {
@@ -734,7 +824,7 @@ async function finalizeBooking(
     }
   }
 
-  const doctorIdForInsert = hasConflict ? null : doctor?.id ?? null
+  const doctorIdForInsert = hasConflict || doctorCenterMismatch ? null : doctor?.id ?? null
   const reason = [
     'Booked via WhatsApp AI',
     session.collected_doctor_preference ? `Doctor preference: ${session.collected_doctor_preference}` : null,
@@ -791,6 +881,7 @@ async function finalizeBooking(
     appointmentTime,
     center,
     doctorName,
+    assignedDoctor: doctorCenterMismatch ? null : doctor,
     doctorPreference: session.collected_doctor_preference ?? 'Any available doctor',
     calendarStatus,
     calendarError,
@@ -817,6 +908,9 @@ async function finalizeBooking(
         channel: 'email',
         message: `Patient appointment email sent to ${patientEmail}`,
         status: 'sent',
+        recipientRole: 'patient',
+        recipientName: patientName,
+        recipientPhone: null,
       })
     } catch (err) {
       console.error('[ai-assistant] Email confirmation failed:', err)
@@ -829,6 +923,9 @@ async function finalizeBooking(
         message: `Patient appointment email failed for ${patientEmail}`,
         status: 'failed',
         errorMessage: (err as Error).message,
+        recipientRole: 'patient',
+        recipientName: patientName,
+        recipientPhone: null,
       })
     }
   }
@@ -857,38 +954,45 @@ async function notifyStaffOfBookedAppointment(
     appointmentTime: string
     center: string
     doctorName: string
+    assignedDoctor: DoctorContact | null
     doctorPreference: string
     calendarStatus: string
     calendarError: string | null
   },
 ): Promise<void> {
   const dashboardUrl = getDashboardUrl(params.appointmentId)
-  const whatsappBody = buildStaffWhatsAppMessage({ ...params, dashboardUrl })
-  const staffWhatsApp = Deno.env.get('STAFF_BOOKING_WHATSAPP_TO') ??
-    Deno.env.get('HOSPITAL_MD_WHATSAPP') ??
-    Deno.env.get('HOSPITAL_MD_PHONE')
+  const recipients = getStaffNotificationRecipients(params.assignedDoctor)
 
-  if (Deno.env.get('BOOKING_NOTIFY_WHATSAPP_ENABLED') !== 'false' && staffWhatsApp) {
-    try {
-      const sid = await sendTextMessage(staffWhatsApp, whatsappBody)
-      await logAppointmentNotification(supabase, {
-        patientId: params.patientId,
-        appointmentId: params.appointmentId,
-        channel: 'whatsapp',
-        message: whatsappBody,
-        status: 'sent',
-        externalMessageId: sid,
-      })
-    } catch (err) {
-      console.error('[ai-assistant] Staff WhatsApp booking alert failed:', err)
-      await logAppointmentNotification(supabase, {
-        patientId: params.patientId,
-        appointmentId: params.appointmentId,
-        channel: 'whatsapp',
-        message: whatsappBody,
-        status: 'failed',
-        errorMessage: (err as Error).message,
-      })
+  if (Deno.env.get('BOOKING_NOTIFY_WHATSAPP_ENABLED') !== 'false') {
+    for (const recipient of recipients) {
+      const whatsappBody = buildStaffWhatsAppMessage({ ...params, dashboardUrl, recipient })
+      try {
+        const sid = await sendTextMessage(recipient.phone, whatsappBody)
+        await logAppointmentNotification(supabase, {
+          patientId: params.patientId,
+          appointmentId: params.appointmentId,
+          channel: 'whatsapp',
+          message: whatsappBody,
+          status: 'sent',
+          externalMessageId: sid,
+          recipientRole: recipient.role,
+          recipientName: recipient.name,
+          recipientPhone: recipient.phone,
+        })
+      } catch (err) {
+        console.error(`[ai-assistant] Staff WhatsApp booking alert failed for ${recipient.role}:`, err)
+        await logAppointmentNotification(supabase, {
+          patientId: params.patientId,
+          appointmentId: params.appointmentId,
+          channel: 'whatsapp',
+          message: whatsappBody,
+          status: 'failed',
+          errorMessage: (err as Error).message,
+          recipientRole: recipient.role,
+          recipientName: recipient.name,
+          recipientPhone: recipient.phone,
+        })
+      }
     }
   }
 
@@ -916,6 +1020,9 @@ async function notifyStaffOfBookedAppointment(
         channel: 'email',
         message: `Staff booking email sent for ${params.patientName}`,
         status: 'sent',
+        recipientRole: 'staff_email',
+        recipientName: 'Staff email recipients',
+        recipientPhone: null,
       })
     } catch (err) {
       console.error('[ai-assistant] Staff email booking alert failed:', err)
@@ -926,9 +1033,38 @@ async function notifyStaffOfBookedAppointment(
         message: `Staff booking email failed for ${params.patientName}`,
         status: 'failed',
         errorMessage: (err as Error).message,
+        recipientRole: 'staff_email',
+        recipientName: 'Staff email recipients',
+        recipientPhone: null,
       })
     }
   }
+}
+
+function getStaffNotificationRecipients(assignedDoctor: DoctorContact | null): StaffNotificationRecipient[] {
+  const operationsPhone = Deno.env.get('OPERATIONS_MANAGER_WHATSAPP') ?? '+2348072023652'
+  const operationsName = Deno.env.get('OPERATIONS_MANAGER_NAME') ?? 'Abdullahi Rahinatu'
+  const primaryPhone = Deno.env.get('PRIMARY_DOCTOR_WHATSAPP') ??
+    Deno.env.get('STAFF_BOOKING_WHATSAPP_TO') ??
+    Deno.env.get('HOSPITAL_MD_WHATSAPP') ??
+    Deno.env.get('HOSPITAL_MD_PHONE') ??
+    '+2348062197384'
+  const primaryName = Deno.env.get('PRIMARY_DOCTOR_NAME') ?? 'Dr. Adekunle Adesina'
+
+  const recipients: StaffNotificationRecipient[] = [
+    { role: 'operations_manager', name: operationsName, phone: operationsPhone },
+    { role: 'primary_doctor', name: primaryName, phone: primaryPhone },
+  ]
+
+  if (assignedDoctor?.phone && !isSamePhone(assignedDoctor.phone, operationsPhone) && !isSamePhone(assignedDoctor.phone, primaryPhone)) {
+    recipients.push({ role: 'assigned_doctor', name: assignedDoctor.name, phone: assignedDoctor.phone })
+  }
+
+  return recipients
+}
+
+function isSamePhone(a: string, b: string): boolean {
+  return a.replace(/\D/g, '') === b.replace(/\D/g, '')
 }
 
 function buildStaffWhatsAppMessage(params: {
@@ -945,14 +1081,19 @@ function buildStaffWhatsAppMessage(params: {
   calendarStatus: string
   calendarError: string | null
   dashboardUrl: string | null
+  recipient: StaffNotificationRecipient
 }): string {
-  const action = params.status === 'confirmed'
-    ? 'Calendar synced. Prepare for the patient visit.'
-    : 'Manual confirmation required. Please check availability and contact the patient.'
+  const actionByRole: Record<StaffNotificationRecipient['role'], string> = {
+    operations_manager: params.status === 'confirmed'
+      ? 'Action required: review the dashboard and coordinate patient arrival.'
+      : 'Action required: please review/confirm this appointment request in the dashboard.',
+    primary_doctor: 'For oversight: Serenity AI booked/received this appointment request.',
+    assigned_doctor: 'A patient requested/booked an appointment with you. Please review the details.',
+  }
 
   return `New Serenity AI appointment (${params.status.toUpperCase()})
 
-${action}
+${actionByRole[params.recipient.role]}
 
 Patient: ${params.patientName}
 Phone: ${params.patientPhone}
@@ -985,6 +1126,9 @@ async function logAppointmentNotification(
     status: 'sent' | 'failed'
     externalMessageId?: string
     errorMessage?: string
+    recipientRole?: 'primary_doctor' | 'operations_manager' | 'assigned_doctor' | 'patient' | 'staff_email'
+    recipientName?: string | null
+    recipientPhone?: string | null
   },
 ): Promise<void> {
   const { error } = await supabase.from('notifications').insert({
@@ -998,6 +1142,9 @@ async function logAppointmentNotification(
     external_message_id: params.externalMessageId ?? null,
     sent_at: params.status === 'sent' ? new Date().toISOString() : null,
     error_message: params.errorMessage ?? null,
+    recipient_role: params.recipientRole ?? null,
+    recipient_name: params.recipientName ?? null,
+    recipient_phone: params.recipientPhone ?? null,
   })
 
   if (error) {
@@ -1193,29 +1340,43 @@ function buildBookingSummary(session: Partial<BookingSessionRow>): string {
 async function findPreferredDoctor(
   supabase: ReturnType<typeof getSupabaseClient>,
   preference: string | null,
-): Promise<{ id: string; name: string } | null> {
+): Promise<DoctorContact | null> {
   if (!preference || isAnyDoctorPreference(preference)) return null
 
   const { data } = await supabase
     .from('doctors')
-    .select('id, name')
+    .select('id, name, phone, location')
     .eq('is_active', true)
     .limit(20)
 
   if (!data || data.length === 0) return null
 
   const normalizedPreference = normalizeDoctorMatchText(preference)
-  const drKAliases = ['dr k', 'doctor k', 'kunle', 'adesina', 'adeshina', 'kunle adesina', 'kunle adeshina']
+  const drKAliases = ['dr k', 'doctor k', 'kunle', 'kune', 'adekunle', 'adesina', 'adeshina', 'adishina', 'akide', 'kunle adesina', 'kunle adeshina', 'adekunle adesina']
   const shouldPreferDrK = drKAliases.some((alias) => normalizedPreference.includes(alias))
 
   if (shouldPreferDrK) {
-    return data.find((doctor) => normalizeDoctorMatchText(doctor.name).includes('kunle') && normalizeDoctorMatchText(doctor.name).includes('adesina')) ?? null
+    return (data as DoctorContact[]).find((doctor) => {
+      const normalizedName = normalizeDoctorMatchText(doctor.name)
+      return normalizedName.includes('adekunle') || (normalizedName.includes('kunle') && normalizedName.includes('adesina'))
+    }) ?? null
   }
 
-  return data.find((doctor) => {
+  return (data as DoctorContact[]).find((doctor) => {
     const normalizedName = normalizeDoctorMatchText(doctor.name)
-    return normalizedName.includes(normalizedPreference) || normalizedPreference.includes(normalizedName)
+    return normalizedName.includes(normalizedPreference) ||
+      normalizedPreference.includes(normalizedName) ||
+      doctorNameAliases(doctor.name).some((alias) => normalizedPreference.includes(alias))
   }) ?? null
+}
+
+function doctorNameAliases(name: string): string[] {
+  const normalizedName = normalizeDoctorMatchText(name)
+  if (normalizedName.includes('grace') && normalizedName.includes('ikeh')) return ['grace', 'ikeh', 'eke', 'grace ikeh', 'grace eke']
+  if (normalizedName.includes('nnajiofor') && normalizedName.includes('osondu')) return ['nnajiofor', 'osondu', 'dr osondu', 'osundu']
+  if (normalizedName.includes('olaleye') && normalizedName.includes('abiola')) return ['olaleye', 'abiola', 'olaleye abiola']
+  if (normalizedName.includes('julson') && normalizedName.includes('jeles')) return ['julson', 'jeles', 'julson jeles']
+  return []
 }
 
 async function hasDoctorSlotConflict(
@@ -1252,6 +1413,12 @@ function isCancelBooking(message: string): boolean {
 function isAnyDoctorPreference(value: string): boolean {
   const lower = value.toLowerCase()
   return ['any', 'any doctor', 'any available doctor', 'no preference', 'anyone', 'no specific doctor'].some((phrase) => lower.includes(phrase))
+}
+
+function doctorServesCenter(location: string, center: string): boolean {
+  const normalizedLocation = normalizeDoctorMatchText(location)
+  const normalizedCenter = normalizeDoctorMatchText(center)
+  return normalizedLocation === 'both' || normalizedLocation.includes(normalizedCenter)
 }
 
 function normalizeDoctorMatchText(value: string): string {
@@ -1307,6 +1474,8 @@ async function triggerEmergencyAlert(
     severity: 'critical' | 'high' | 'medium'
     keywords: string[]
     messageSnippet: string
+    assignedDoctorName?: string | null
+    assignedDoctorPhone?: string | null
   },
 ): Promise<void> {
   const supabaseUrl = getSupabaseUrl()

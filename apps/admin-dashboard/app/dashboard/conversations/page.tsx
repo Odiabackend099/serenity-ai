@@ -6,14 +6,15 @@ const PER_PAGE = 25
 export default async function ConversationsPage({
   searchParams,
 }: {
-  searchParams: { q?: string; page?: string; sentiment?: string; type?: string; emergency?: string }
+  searchParams: Promise<{ q?: string; page?: string; sentiment?: string; type?: string; emergency?: string }>
 }) {
   const supabase = await createServerSupabaseClient()
-  const search = searchParams.q ?? ''
-  const page = Math.max(1, parseInt(searchParams.page ?? '1', 10))
-  const sentimentFilter = searchParams.sentiment ?? ''
-  const typeFilter = searchParams.type ?? ''
-  const emergencyOnly = searchParams.emergency === '1'
+  const resolvedSearchParams = await searchParams
+  const search = resolvedSearchParams.q ?? ''
+  const page = Math.max(1, parseInt(resolvedSearchParams.page ?? '1', 10))
+  const sentimentFilter = resolvedSearchParams.sentiment ?? ''
+  const typeFilter = resolvedSearchParams.type ?? ''
+  const emergencyOnly = resolvedSearchParams.emergency === '1'
   const offset = (page - 1) * PER_PAGE
 
   let query = supabase
