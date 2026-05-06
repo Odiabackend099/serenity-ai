@@ -133,7 +133,7 @@ serve(async (req: Request) => {
       }
     }
 
-    // ── Dashboard confirmation: status + calendar + patient notifications ───
+    // ── Dashboard confirmation: status + calendar + patient + assigned doctor notifications
     case 'appointment_dashboard_confirmation': {
       if (!payload.appointmentId) {
         return Response.json({ error: 'appointmentId is required' }, { status: 400 })
@@ -274,7 +274,7 @@ async function confirmAppointmentFromDashboard(appointmentId: string): Promise<R
   const supabase = getSupabaseClient()
   const { data: appointment, error } = await supabase
     .from('appointments')
-    .select('*, patients(name, phone_number, email), doctors(name)')
+    .select('*, patients(name, phone_number, email), doctors(name, phone)')
     .eq('id', appointmentId)
     .single()
 
@@ -283,7 +283,7 @@ async function confirmAppointmentFromDashboard(appointmentId: string): Promise<R
   }
 
   const patient = appointment.patients as { name?: string | null; phone_number?: string | null; email?: string | null } | null
-  const doctor = appointment.doctors as { name?: string | null } | null
+  const doctor = appointment.doctors as { name?: string | null; phone?: string | null } | null
   const patientName = patient?.name ?? 'Patient'
   const patientPhone = patient?.phone_number ?? ''
   const doctorName = doctor?.name ?? 'To be assigned'
@@ -441,6 +441,44 @@ async function confirmAppointmentFromDashboard(appointmentId: string): Promise<R
       })
       results.email = false
     }
+  }
+
+  if (doctor?.phone) {
+    try {
+      const sid = await sendTextMessage(
+        doctor.phone,
+        `Serenity AI appointment confirmed with you.\n\nPatient: ${patientName}\nPhone: ${patientPhone || 'Not provided'}\nService: ${serviceType}\nDate: ${appointmentDate}\nTime: ${appointmentTime}\nCenter: ${center}\n\nPlease review the dashboard for full details.`,
+      )
+      await logNotification({
+        patientId: appointment.patient_id,
+        appointmentId,
+        notificationType: 'staff_booking_alert',
+        channel: 'whatsapp',
+        message: `Dashboard assignment alert sent to ${doctor.name ?? 'assigned doctor'}`,
+        status: 'sent',
+        externalMessageId: sid,
+        recipientRole: 'assigned_doctor',
+        recipientName: doctor.name ?? 'Assigned doctor',
+        recipientPhone: doctor.phone,
+      })
+      results.assignedDoctorWhatsapp = true
+    } catch (err) {
+      await logNotification({
+        patientId: appointment.patient_id,
+        appointmentId,
+        notificationType: 'staff_booking_alert',
+        channel: 'whatsapp',
+        message: `Dashboard assignment alert failed for ${doctor.name ?? 'assigned doctor'}`,
+        status: 'failed',
+        errorMessage: (err as Error).message,
+        recipientRole: 'assigned_doctor',
+        recipientName: doctor.name ?? 'Assigned doctor',
+        recipientPhone: doctor.phone,
+      })
+      results.assignedDoctorWhatsapp = false
+    }
+  } else {
+    results.assignedDoctorWhatsapp = 'skipped'
   }
 
   return { confirmed: true, appointmentId, calendarStatus, calendarError, results }

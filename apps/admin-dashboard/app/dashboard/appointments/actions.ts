@@ -26,7 +26,23 @@ async function callNotificationFunction(payload: Record<string, unknown>): Promi
   })
 }
 
-export async function confirmAppointment(appointmentId: string): Promise<void> {
+export async function confirmAppointment(appointmentId: string, formData?: FormData): Promise<void> {
+  const doctorId = formData?.get('doctor_id')?.toString() || null
+  const supabase = await createServerSupabaseClient()
+
+  if (doctorId) {
+    const { error } = await supabase
+      .from('appointments')
+      .update({ doctor_id: doctorId })
+      .eq('id', appointmentId)
+
+    if (error) {
+      console.error('[appointments] doctor assignment failed:', error.message)
+      revalidatePath('/dashboard/appointments')
+      return
+    }
+  }
+
   const res = await callNotificationFunction({
     type: 'appointment_dashboard_confirmation',
     appointmentId,

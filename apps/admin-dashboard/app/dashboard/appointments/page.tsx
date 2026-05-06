@@ -24,6 +24,7 @@ type NotificationRow = {
 }
 type AppointmentWithRelations = {
   id: string
+  doctor_id: string | null
   appointment_date: string
   appointment_time: string | null
   center: string | null
@@ -39,6 +40,12 @@ type AppointmentWithRelations = {
   patients: { id?: string; name?: string; phone_number?: string; email?: string | null } | null
   doctors: { name?: string; speciality?: string } | null
   notifications?: NotificationRow[] | null
+}
+
+type DoctorOption = {
+  id: string
+  name: string
+  location: string | null
 }
 
 const VALID_VIEWS: View[] = ['upcoming', 'pending', 'confirmed', 'whatsapp', 'calendar', 'past', 'all']
@@ -77,6 +84,7 @@ export default async function AppointmentsPage({
 
   const [
     { data: appointments },
+    { data: doctors },
     { count: upcomingCount },
     { count: pendingCount },
     { count: confirmedCount },
@@ -86,6 +94,7 @@ export default async function AppointmentsPage({
     { count: allCount },
   ] = await Promise.all([
     query,
+    supabase.from('doctors').select('id, name, location').eq('is_active', true).order('name'),
     supabase.from('appointments').select('*', { count: 'exact', head: true }).gte('appointment_date', today).neq('status', 'cancelled'),
     supabase.from('appointments').select('*', { count: 'exact', head: true }).eq('status', 'pending').gte('appointment_date', today),
     supabase.from('appointments').select('*', { count: 'exact', head: true }).eq('status', 'confirmed').gte('appointment_date', today),
@@ -101,6 +110,7 @@ export default async function AppointmentsPage({
     acc[date].push(appt)
     return acc
   }, {} as Record<string, AppointmentWithRelations[]>)
+  const activeDoctors = (doctors ?? []) as DoctorOption[]
 
   const tabs: { key: View; label: string; count: number | null }[] = [
     { key: 'upcoming', label: 'Upcoming', count: upcomingCount },
@@ -165,6 +175,7 @@ export default async function AppointmentsPage({
                   <AppointmentCard
                     key={appt.id}
                     appointment={appt}
+                    doctors={activeDoctors}
                     today={today}
                     highlighted={highlightedAppointment === appt.id}
                     withBorder={index > 0}
@@ -188,11 +199,13 @@ export default async function AppointmentsPage({
 
 function AppointmentCard({
   appointment,
+  doctors,
   today,
   highlighted,
   withBorder,
 }: {
   appointment: AppointmentWithRelations
+  doctors: DoctorOption[]
   today: string
   highlighted: boolean
   withBorder: boolean
@@ -278,6 +291,22 @@ function AppointmentCard({
         <div className="flex flex-wrap gap-2 xl:max-w-xs xl:justify-end">
           {appointment.status === 'pending' && (
             <form action={confirmAppointment.bind(null, appointment.id)}>
+              <div className="mb-2 min-w-56">
+                <label htmlFor={`doctor-${appointment.id}`} className="sr-only">Assign doctor</label>
+                <select
+                  id={`doctor-${appointment.id}`}
+                  name="doctor_id"
+                  defaultValue={appointment.doctor_id ?? ''}
+                  className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs font-medium text-gray-700 shadow-sm focus:border-serenity-500 focus:outline-none focus:ring-2 focus:ring-serenity-100"
+                >
+                  <option value="">Assign doctor...</option>
+                  {doctors.map((doctorOption) => (
+                    <option key={doctorOption.id} value={doctorOption.id}>
+                      {doctorOption.name}{doctorOption.location ? ` · ${doctorOption.location}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <ActionButton tone="primary">Confirm</ActionButton>
             </form>
           )}
