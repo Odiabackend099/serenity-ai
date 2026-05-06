@@ -110,13 +110,14 @@ serve(async (req: Request) => {
         })
       })
       .catch(async (err) => {
+        const failure = notificationFailureFromError(err)
         await logEmergencyNotification(supabase, {
           patientId: payload.patientId,
           emergencyAlertId: alert.id,
           recipient,
           message: `Emergency WhatsApp failed for ${recipient.name}`,
-          status: 'failed',
-          errorMessage: (err as Error).message,
+          status: failure.status,
+          errorMessage: failure.message,
         })
         throw err
       }))).then(async () => {
@@ -267,7 +268,7 @@ async function logEmergencyNotification(
     emergencyAlertId: string
     recipient: EmergencyRecipient
     message: string
-    status: 'sent' | 'failed'
+    status: 'sent' | 'pending' | 'failed'
     externalMessageId?: string
     errorMessage?: string
   },
@@ -289,4 +290,16 @@ async function logEmergencyNotification(
   })
 
   if (error) console.error('[emergency-alert] notification log failed:', error.message)
+}
+
+function notificationFailureFromError(err: unknown): { status: 'pending' | 'failed'; message: string } {
+  const message = err instanceof Error ? err.message : String(err)
+  if (message.includes('63038') || message.toLowerCase().includes('daily messages limit')) {
+    return {
+      status: 'pending',
+      message: 'WhatsApp delivery is queued. The Twilio daily message limit has been reached; retry after the limit resets or after the hospital sender is upgraded.',
+    }
+  }
+
+  return { status: 'failed', message }
 }
