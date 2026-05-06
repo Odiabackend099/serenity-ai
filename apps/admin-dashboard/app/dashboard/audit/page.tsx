@@ -45,6 +45,10 @@ export default async function AuditLogPage({
   const { data: logs, count } = await query
 
   const totalPages = Math.ceil((count ?? 0) / PER_PAGE)
+  const exportFromDate = new Date().toISOString().split('T')[0]
+  const exportTo = new Date()
+  exportTo.setUTCDate(exportTo.getUTCDate() + 30)
+  const exportToDate = exportTo.toISOString().split('T')[0]
 
   // Unique resource types for filter
   const { data: resourceTypes } = await supabase
@@ -292,7 +296,7 @@ export default async function AuditLogPage({
             ↓ Appointments CSV (All)
           </a>
           <a
-            href={`/api/export/appointments?from=${new Date().toISOString().split('T')[0]}&to=${new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]}`}
+            href={`/api/export/appointments?from=${exportFromDate}&to=${exportToDate}`}
             className="text-xs px-3 py-2 bg-white border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-100 transition font-medium"
           >
             ↓ Appointments (Next 30 Days)

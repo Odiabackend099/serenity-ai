@@ -1,5 +1,6 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { format } from 'date-fns'
+import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { updatePatient, sendManualMessage, requestPatientDeletion } from './actions'
 
@@ -49,9 +50,9 @@ export default async function PatientDetailPage({
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      <a href="/dashboard/patients" className="inline-flex items-center gap-1 text-sm text-serenity-600 hover:underline mb-5">
+      <Link href="/dashboard/patients" className="inline-flex items-center gap-1 text-sm text-serenity-600 hover:underline mb-5">
         ← Back to Patients
-      </a>
+      </Link>
 
       {/* ── Patient Header ── */}
       <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 
@@ -33,9 +34,11 @@ export default function LoginPage() {
       <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <img
+          <Image
             src="/brand/serenity-royale-logo.png"
             alt="Serenity Royale Hospital logo"
+            width={80}
+            height={80}
             className="w-20 h-20 rounded-full object-cover mx-auto mb-4 border border-gray-100 shadow-sm"
           />
           <h1 className="text-2xl font-bold text-gray-900">Serenity Royale Hospital</h1>

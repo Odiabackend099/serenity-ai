@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
@@ -107,9 +108,11 @@ export default function Sidebar({ emergencyCount = 0 }: { emergencyCount?: numbe
       {/* Logo */}
       <div className="p-6 border-b border-serenity-800">
         <div className="flex items-center gap-3">
-          <img
+          <Image
             src="/brand/serenity-royale-logo.png"
             alt="Serenity Royale Hospital logo"
+            width={40}
+            height={40}
             className="w-10 h-10 rounded-lg object-cover bg-white flex-shrink-0"
           />
           <div>
@@ -149,9 +152,11 @@ export default function Sidebar({ emergencyCount = 0 }: { emergencyCount?: numbe
       {/* Hospital Info */}
       <div className="p-4 border-t border-serenity-800">
         <div className="flex items-center gap-2 mb-2">
-          <img
+          <Image
             src="/brand/serenity-royale-logo.png"
             alt=""
+            width={28}
+            height={28}
             className="w-7 h-7 rounded object-cover bg-white"
           />
           <p className="text-serenity-300 text-xs font-medium">Serenity Royale Hospital</p>

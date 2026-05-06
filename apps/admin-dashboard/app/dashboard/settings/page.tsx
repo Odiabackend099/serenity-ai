@@ -13,6 +13,8 @@ import {
 
 export default async function SettingsPage() {
   const supabase = await createServerSupabaseClient()
+  const recentMessageCutoff = new Date()
+  recentMessageCutoff.setHours(recentMessageCutoff.getHours() - 24)
 
   const [
     { data: doctors },
@@ -33,7 +35,7 @@ export default async function SettingsPage() {
       .order('start_date', { ascending: true })
       .limit(20),
     supabase.from('admin_users').select('*').order('name'),
-    supabase.from('message_queue').select('*', { count: 'exact', head: true }).gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+    supabase.from('message_queue').select('*', { count: 'exact', head: true }).gte('created_at', recentMessageCutoff.toISOString()),
     supabase.from('message_queue').select('*', { count: 'exact', head: true }).in('status', ['queued', 'failed', 'dead_letter']),
     supabase.from('appointments').select('*', { count: 'exact', head: true }).eq('status', 'pending').eq('created_from_whatsapp', true),
     supabase.from('appointments').select('*', { count: 'exact', head: true }).eq('calendar_sync_status', 'synced'),

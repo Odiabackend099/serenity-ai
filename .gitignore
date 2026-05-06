@@ -9,3 +9,6 @@ build/
 *.log
 .vercel
 .env*.local
+.playwright-cli/
+*.tsbuildinfo
+supabase/.temp/

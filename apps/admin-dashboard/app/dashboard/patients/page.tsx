@@ -1,5 +1,6 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { format } from 'date-fns'
+import Link from 'next/link'
 
 export default async function PatientsPage({
   searchParams,
@@ -59,12 +60,12 @@ export default async function PatientsPage({
             Search
           </button>
           {search && (
-            <a
+            <Link
               href="/dashboard/patients"
               className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 transition"
             >
               Clear
-            </a>
+            </Link>
           )}
         </form>
       </div>
@@ -92,7 +93,7 @@ export default async function PatientsPage({
                     return (
                       <tr key={patient.id} className={`hover:bg-serenity-50 transition ${hasPendingDeletion ? 'opacity-60' : ''}`}>
                         <td className="px-4 py-3">
-                          <a href={`/dashboard/patients/${patient.id}`} className="flex items-center gap-3 group">
+                          <Link href={`/dashboard/patients/${patient.id}`} className="flex items-center gap-3 group">
                             <div className="w-8 h-8 bg-serenity-100 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold text-serenity-700">
                               {patient.name?.[0]?.toUpperCase() ?? '?'}
                             </div>
@@ -102,7 +103,7 @@ export default async function PatientsPage({
                                 <p className="text-xs text-gray-400">{patient.age} yrs · {patient.gender ?? 'N/A'}</p>
                               )}
                             </div>
-                          </a>
+                          </Link>
                         </td>
                         <td className="px-4 py-3">
                           <p className="text-gray-700">{patient.phone_number}</p>
@@ -148,20 +149,20 @@ export default async function PatientsPage({
               </p>
               <div className="flex gap-2">
                 {page > 1 && (
-                  <a
+                  <Link
                     href={`/dashboard/patients?q=${search}&page=${page - 1}`}
                     className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition"
                   >
                     Previous
-                  </a>
+                  </Link>
                 )}
                 {page < totalPages && (
-                  <a
+                  <Link
                     href={`/dashboard/patients?q=${search}&page=${page + 1}`}
                     className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition"
                   >
                     Next
-                  </a>
+                  </Link>
                 )}
               </div>
             </div>
