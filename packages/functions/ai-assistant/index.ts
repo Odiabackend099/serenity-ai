@@ -829,7 +829,7 @@ async function finalizeBooking(
     'Booked via WhatsApp AI',
     session.collected_doctor_preference ? `Doctor preference: ${session.collected_doctor_preference}` : null,
     calendarStatus !== 'synced' ? `Calendar status: ${calendarStatus}` : null,
-    calendarError ? `Calendar error: ${calendarError.slice(0, 200)}` : null,
+    calendarError ? `Calendar note: ${formatCalendarStatusForStaff(calendarStatus)}` : null,
   ].filter(Boolean).join(' | ')
 
   const { data: appointment, error: appointmentError } = await supabase.from('appointments').insert({
@@ -1090,6 +1090,7 @@ function buildStaffWhatsAppMessage(params: {
     primary_doctor: 'For oversight: Serenity AI booked/received this appointment request.',
     assigned_doctor: 'A patient requested/booked an appointment with you. Please review the details.',
   }
+  const calendarSummary = formatCalendarStatusForStaff(params.calendarStatus)
 
   return `New Serenity AI appointment (${params.status.toUpperCase()})
 
@@ -1104,8 +1105,32 @@ Time: ${params.appointmentTime.slice(0, 5)}
 Center: ${params.center}
 Doctor: ${params.doctorName}
 Preference: ${params.doctorPreference}
-Calendar: ${params.calendarStatus}${params.calendarError ? ` (${params.calendarError.slice(0, 120)})` : ''}
+Calendar: ${calendarSummary}
 ${params.dashboardUrl ? `Dashboard: ${params.dashboardUrl}` : ''}`.trim()
+}
+
+function formatCalendarStatusForStaff(status: string | null): string {
+  switch (status) {
+    case 'synced':
+      return 'Synced with Google Calendar.'
+    case 'pending_no_matched_doctor':
+      return 'Doctor not assigned yet. Secretary should assign a doctor in the dashboard.'
+    case 'pending_doctor_center_mismatch':
+      return 'Doctor and center need review. Secretary should confirm the correct doctor and branch.'
+    case 'pending_database_conflict':
+      return 'Possible schedule conflict. Secretary should review availability.'
+    case 'pending_calendar_not_configured':
+      return 'Calendar setup needs review. Appointment is saved for manual confirmation.'
+    case 'pending_calendar_busy':
+      return 'Requested time may be unavailable. Secretary should confirm another slot if needed.'
+    case 'pending_calendar_error':
+      return 'Calendar check needs review. Appointment is saved for manual confirmation.'
+    case 'not_checked':
+    case null:
+      return 'Not checked yet. Please review in the dashboard.'
+    default:
+      return 'Needs review in the dashboard.'
+  }
 }
 
 function getDashboardUrl(appointmentId: string): string | null {

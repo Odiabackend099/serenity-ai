@@ -50,7 +50,7 @@ export async function GET(request: Request) {
       a.service_type ?? '',
       a.center ?? '',
       a.status ?? '',
-      a.reason ?? '',
+      sanitizeExportReason(a.reason),
     ]
   })
 
@@ -66,4 +66,14 @@ export async function GET(request: Request) {
       'Content-Disposition': `attachment; filename="appointments-${dateTag}.csv"`,
     },
   })
+}
+
+function sanitizeExportReason(reason: string | null): string {
+  if (!reason) return ''
+  return reason
+    .split(' | ')
+    .map((part) => part.toLowerCase().startsWith('calendar error:')
+      ? 'Calendar note: Google Calendar check needs review. Appointment is saved for manual confirmation.'
+      : part)
+    .join(' | ')
 }

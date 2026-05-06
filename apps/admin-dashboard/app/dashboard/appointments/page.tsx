@@ -251,19 +251,19 @@ function AppointmentCard({
             {appointment.service_type ?? 'Consultation'} · {appointment.center ?? 'Center TBD'} · {doctor?.name ?? 'No doctor assigned'}
           </p>
           {appointment.reason && (
-            <p className="mt-1 max-w-3xl text-xs text-gray-400 break-words">{appointment.reason}</p>
+            <p className="mt-1 max-w-3xl text-xs text-gray-400 break-words">{formatAppointmentReason(appointment.reason)}</p>
           )}
 
           <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-6">
             <ProofBadge
               label="Calendar"
               status={calendarStatus(appointment.calendar_sync_status)}
-              detail={appointment.calendar_sync_error ?? appointment.calendar_sync_status ?? 'No calendar sync recorded'}
+              detail={formatCalendarDetail(appointment.calendar_sync_status, appointment.calendar_sync_error)}
             />
             <ProofBadge
               label="Patient WhatsApp"
               status={normalizeNotificationStatus(patientWhatsapp?.status)}
-              detail={patientWhatsapp?.error_message ?? patientWhatsapp?.status ?? 'No confirmation WhatsApp logged yet'}
+              detail={formatNotificationDetail(patientWhatsapp, 'No confirmation WhatsApp logged yet')}
             />
             <ProofBadge
               label="Ops contact"
@@ -283,7 +283,7 @@ function AppointmentCard({
             <ProofBadge
               label="Email"
               status={emailStatus}
-              detail={email?.error_message ?? email?.status ?? (patient?.email ? 'No email notification logged yet' : 'Patient email not provided')}
+              detail={formatNotificationDetail(email, patient?.email ? 'No email notification logged yet' : 'Patient email not provided')}
             />
           </div>
         </div>
@@ -355,8 +355,49 @@ function latestNotification(appointment: AppointmentWithRelations, type: string 
 function formatNotificationDetail(notification: NotificationRow | undefined, fallback: string): string {
   if (!notification) return fallback
   const recipient = [notification.recipient_name, notification.recipient_phone].filter(Boolean).join(' · ')
-  const status = notification.error_message ?? notification.status ?? 'No status'
+  const status = humanizeProviderError(notification.error_message) ?? notification.status ?? 'No status'
   return recipient ? `${recipient}: ${status}` : status
+}
+
+function formatCalendarDetail(status: string | null, error: string | null): string {
+  if (status === 'synced') return 'Synced with Google Calendar.'
+  if (status === 'pending_no_matched_doctor') return 'Doctor not assigned yet. Secretary should assign a doctor before confirming.'
+  if (status === 'pending_doctor_center_mismatch') return 'Doctor and branch need review before confirmation.'
+  if (status === 'pending_database_conflict') return 'Possible appointment conflict. Review the schedule before confirming.'
+  if (status === 'pending_calendar_not_configured') return 'Calendar setup needs review. Appointment is saved for manual confirmation.'
+  if (status === 'pending_calendar_busy') return 'Requested time may already be booked. Review availability before confirming.'
+  if (status === 'pending_calendar_error') return 'Google Calendar check needs review. Appointment is saved for manual confirmation.'
+  return humanizeProviderError(error) ?? status ?? 'No calendar sync recorded yet.'
+}
+
+function formatAppointmentReason(reason: string): string {
+  return reason
+    .split(' | ')
+    .map((part) => {
+      if (part.toLowerCase().startsWith('calendar error:')) {
+        return 'Calendar note: Google Calendar check needs review. Appointment is saved for manual confirmation.'
+      }
+      return humanizeProviderError(part) ?? part
+    })
+    .join(' | ')
+}
+
+function humanizeProviderError(error?: string | null): string | null {
+  if (!error) return null
+  const normalized = error.toLowerCase()
+  if (normalized.includes('63038')) {
+    return 'WhatsApp delivery limit reached. Try again after reset or use the approved hospital sender.'
+  }
+  if (normalized.includes('twilio whatsapp send failed')) {
+    return 'WhatsApp delivery failed. Check the Twilio sender and recipient access.'
+  }
+  if (normalized.includes('google calendar') || normalized.includes('freebusy')) {
+    return 'Google Calendar availability check failed. Appointment is saved and needs manual review.'
+  }
+  if (error.includes('{') || error.includes('}') || normalized.includes('"error"')) {
+    return 'Technical provider error. Admin should review logs.'
+  }
+  return error.length > 140 ? `${error.slice(0, 137)}...` : error
 }
 
 function normalizeNotificationStatus(status?: string | null): NotificationStatus {

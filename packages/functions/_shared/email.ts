@@ -326,6 +326,7 @@ export async function sendStaffAppointmentBookedEmail(params: {
   const action = params.status === 'confirmed'
     ? 'Calendar has been synced. Staff should prepare for the patient visit.'
     : 'Manual confirmation is required. Please check doctor availability and contact the patient.'
+  const calendarSummary = formatStaffCalendarSummary(params.calendarStatus)
 
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 680px; margin: 0 auto;">
@@ -345,7 +346,7 @@ export async function sendStaffAppointmentBookedEmail(params: {
           <tr><td style="padding: 8px 0; font-weight: bold; color: #374151;">Center</td><td style="padding: 8px 0; color: #111827;">${escapeHtml(params.center)}</td></tr>
           <tr><td style="padding: 8px 0; font-weight: bold; color: #374151;">Assigned Doctor</td><td style="padding: 8px 0; color: #111827;">${escapeHtml(params.doctorName)}</td></tr>
           <tr><td style="padding: 8px 0; font-weight: bold; color: #374151;">Doctor Preference</td><td style="padding: 8px 0; color: #111827;">${escapeHtml(params.doctorPreference)}</td></tr>
-          <tr><td style="padding: 8px 0; font-weight: bold; color: #374151;">Calendar</td><td style="padding: 8px 0; color: #111827;">${escapeHtml(params.calendarStatus)}${params.calendarError ? ` — ${escapeHtml(params.calendarError)}` : ''}</td></tr>
+          <tr><td style="padding: 8px 0; font-weight: bold; color: #374151;">Calendar</td><td style="padding: 8px 0; color: #111827;">${escapeHtml(calendarSummary)}</td></tr>
         </table>
         ${params.dashboardUrl ? `<p style="margin: 20px 0 0;"><a href="${escapeHtml(params.dashboardUrl)}" style="color: #0f766e; font-weight: bold;">Open admin dashboard</a></p>` : ''}
         <p style="margin-top: 20px; font-size: 12px; color: #9ca3af;">Appointment ID: ${escapeHtml(params.appointmentId)}</p>
@@ -359,4 +360,28 @@ export async function sendStaffAppointmentBookedEmail(params: {
     html,
     text: `New WhatsApp appointment (${params.status}) for ${params.patientName}, ${params.appointmentDate} ${params.appointmentTime}, ${params.center}.`,
   })
+}
+
+function formatStaffCalendarSummary(status: string | null): string {
+  switch (status) {
+    case 'synced':
+      return 'Synced with Google Calendar.'
+    case 'pending_no_matched_doctor':
+      return 'Doctor not assigned yet. Secretary should assign a doctor in the dashboard.'
+    case 'pending_doctor_center_mismatch':
+      return 'Doctor and center need review. Secretary should confirm the correct doctor and branch.'
+    case 'pending_database_conflict':
+      return 'Possible schedule conflict. Secretary should review availability.'
+    case 'pending_calendar_not_configured':
+      return 'Calendar setup needs review. Appointment is saved for manual confirmation.'
+    case 'pending_calendar_busy':
+      return 'Requested time may be unavailable. Secretary should confirm another slot if needed.'
+    case 'pending_calendar_error':
+      return 'Calendar check needs review. Appointment is saved for manual confirmation.'
+    case 'not_checked':
+    case null:
+      return 'Not checked yet. Please review in the dashboard.'
+    default:
+      return 'Needs review in the dashboard.'
+  }
 }
