@@ -139,8 +139,8 @@ export default async function DashboardPage() {
 
   const metrics = [
     { label: 'Patients', value: data.stats.totalPatients, detail: 'Active patient records', tone: 'blue' as Tone, icon: 'patients' },
-    { label: 'Today', value: data.stats.todayAppointments, detail: 'Non-cancelled appointments', tone: 'green' as Tone, icon: 'calendar' },
-    { label: 'AI Requests', value: data.stats.pendingAiAppointments, detail: 'Pending WhatsApp bookings', tone: data.stats.pendingAiAppointments ? 'amber' as Tone : 'green' as Tone, icon: 'clock' },
+    { label: 'Today', value: data.stats.todayAppointments, detail: 'Appointments booked today', tone: 'green' as Tone, icon: 'calendar' },
+    { label: 'Booking requests', value: data.stats.pendingAiAppointments, detail: 'Waiting for secretary review', tone: data.stats.pendingAiAppointments ? 'amber' as Tone : 'green' as Tone, icon: 'clock' },
     { label: 'Emergencies', value: data.stats.unresolvedEmergencies, detail: 'Unresolved alerts', tone: data.stats.unresolvedEmergencies ? 'red' as Tone : 'green' as Tone, icon: 'alert' },
   ]
 
@@ -186,21 +186,21 @@ export default async function DashboardPage() {
           icon="message"
         />
         <HealthCard
-          title="Queue"
+          title="AI message delivery"
           tone={queueTone}
           value={data.stats.failedMessages > 0 ? 'Action needed' : data.stats.queuedMessages > 0 ? 'Processing' : 'Clear'}
-          detail={`${data.stats.queuedMessages} queued · ${data.stats.failedMessages} failed`}
+          detail={`${data.stats.queuedMessages} waiting · ${data.stats.failedMessages} need review`}
           icon="queue"
         />
         <HealthCard
-          title="Calendar Sync"
+          title="Calendar"
           tone={calendarTone}
           value={data.stats.calendarNeedsReview > 0 ? 'Review needed' : 'Healthy'}
           detail={`${data.stats.calendarNeedsReview} upcoming appointment${data.stats.calendarNeedsReview === 1 ? '' : 's'} not synced`}
           icon="calendar"
         />
         <HealthCard
-          title="Operations Alerts"
+          title="Secretary alerts"
           tone={staffTone}
           value={statusText(data.lastStaffWhatsapp)}
           detail={data.lastStaffWhatsapp ? `Last Abdullahi alert ${timeAgo(data.lastStaffWhatsapp.created_at)}` : 'No operations alert logged yet'}
@@ -251,11 +251,11 @@ export default async function DashboardPage() {
         </section>
 
         <section className="bg-white border border-gray-200 rounded-lg p-4">
-          <h2 className="font-semibold text-gray-950 text-sm">MVP readiness</h2>
+          <h2 className="font-semibold text-gray-950 text-sm">System readiness</h2>
           <div className="mt-4 space-y-3">
             <ReadinessRow label="Two-way WhatsApp" tone={whatsappTone} value={data.lastConversation ? 'Verified' : 'Needs live test'} />
             <ReadinessRow label="Patient confirmation" tone={notificationTone(data.lastPatientWhatsapp)} value={statusText(data.lastPatientWhatsapp)} />
-            <ReadinessRow label="Abdullahi operations alert" tone={staffTone} value={statusText(data.lastStaffWhatsapp)} />
+            <ReadinessRow label="Secretary WhatsApp alert" tone={staffTone} value={statusText(data.lastStaffWhatsapp)} />
             <ReadinessRow label="Email notifications" tone={notificationTone(data.lastEmail)} value={statusText(data.lastEmail)} />
             <ReadinessRow label="Calendar sync" tone={calendarTone} value={data.stats.calendarNeedsReview > 0 ? 'Needs review' : 'Ready'} />
           </div>
@@ -329,10 +329,10 @@ function AppointmentLine({ appointment, urgent = false }: { appointment: Appoint
           <p className="text-xs text-gray-500 mt-1 truncate">
             {format(new Date(`${appointment.appointment_date}T00:00:00`), 'MMM d')} · {appointment.appointment_time?.slice(0, 5) ?? '--:--'} · {appointment.center ?? 'No center'}
           </p>
-          <p className="text-xs text-gray-400 mt-0.5 truncate">{appointment.service_type ?? 'Consultation'} · {doctor?.name ?? 'No doctor assigned'}</p>
+          <p className="text-xs text-gray-400 mt-0.5 truncate">{appointment.service_type ?? 'Consultation'} · {doctor?.name ?? 'Doctor not assigned yet'}</p>
         </div>
         <div className="flex flex-col items-end gap-1 flex-shrink-0">
-          <Badge tone={statusTone}>{appointment.status ?? 'pending'}</Badge>
+          <Badge tone={statusTone}>{appointmentStatusLabel(appointment.status)}</Badge>
           <span className="text-[11px] text-gray-400">{calendarLabel(appointment.calendar_sync_status)}</span>
         </div>
       </div>
@@ -350,7 +350,7 @@ function ConversationLine({ conversation }: { conversation: ConversationRow }) {
           <div className="flex items-center gap-2 flex-wrap">
             <p className="text-sm font-semibold text-gray-950 truncate">{patient?.name ?? patient?.phone_number ?? 'Unknown patient'}</p>
             <Badge tone={tone}>{conversation.message_type ?? 'text'}</Badge>
-            {conversation.has_emergency_keywords && <Badge tone="red">Emergency keyword</Badge>}
+            {conversation.has_emergency_keywords && <Badge tone="red">Urgent language</Badge>}
           </div>
           <p className="text-xs text-gray-600 mt-1 truncate">Patient: {conversation.patient_message ?? '(media)'}</p>
           <p className="text-xs text-serenity-700 mt-0.5 truncate">Dr Ade: {conversation.ai_response ?? 'No AI response saved'}</p>
@@ -421,12 +421,20 @@ function notificationTone(notification: NotificationRow | null): Tone {
 }
 
 function statusText(notification: NotificationRow | null): string {
-  if (!notification) return 'No proof yet'
+  if (!notification) return 'Not sent yet'
   if (notification.status === 'sent') return 'Sent'
   if (notification.status === 'delivered') return 'Delivered'
   if (notification.status === 'read') return 'Read'
   if (notification.status === 'failed') return 'Failed'
+  if (notification.status === 'pending') return 'Waiting to send'
   return notification.status ?? 'Unknown'
+}
+
+function appointmentStatusLabel(status: string | null): string {
+  if (status === 'pending') return 'Needs confirmation'
+  if (status === 'no_show') return 'No-show'
+  if (!status) return 'Needs confirmation'
+  return status.charAt(0).toUpperCase() + status.slice(1)
 }
 
 function calendarLabel(status: string | null): string {

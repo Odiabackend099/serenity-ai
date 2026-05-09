@@ -155,7 +155,7 @@ Dashboard confirmation now performs real backend work:
 
 Hybrid routing has been implemented and deployed in `packages/functions/ai-assistant/index.ts`.
 
-After consent, crisis, active booking, new booking, and feedback handling, the AI worker now checks deterministic templates before calling Groq. Templates currently handle:
+After consent, crisis, active booking, returning-patient memory, new booking, and feedback handling, the AI worker now checks deterministic templates before calling Groq. Templates currently handle:
 
 - Privacy/NDPR/data requests
 - Costs/fees/billing
@@ -165,6 +165,65 @@ After consent, crisis, active booking, new booking, and feedback handling, the A
 - Appointment cancellation/reschedule handoff
 
 If none of those template intents match, the message goes to Groq as a conversational low-risk response.
+
+### Returning Patient Memory
+
+Returning-patient memory is now structured and operational, not vague AI memory.
+
+The WhatsApp assistant loads verified database context before general AI:
+
+- Patient profile: name, phone, email, gender, location, consent state.
+- Latest active or recent appointment.
+- Latest completed booking session.
+- Recent conversation turns.
+- Any unresolved emergency alert.
+
+Deterministic memory responses now handle:
+
+- “Hi/hello” from a known patient with an active appointment.
+- “Did you book my appointment?”
+- “Do I have an appointment?”
+- “Who is my doctor?”
+- “Cancel appointment” with confirmation before cancellation.
+- “Reschedule appointment” as a pending secretary-reviewed change request.
+- “Book appointment” from a patient who already has an active appointment.
+
+Groq receives only a short structured patient summary for general conversation, with instructions not to invent appointment status or doctor assignment.
+
+Dashboard patient profiles now include a `Patient memory` section showing the facts Dr Ade uses for returning-patient recognition.
+
+### WhatsApp Admin Commands
+
+`ai-assistant` now supports restricted admin commands through WhatsApp for Dr K and the operations secretary only.
+
+Authorised admin phone numbers are read from:
+
+- `PRIMARY_DOCTOR_WHATSAPP` (defaults to Dr. Adekunle Adesina / Dr K)
+- `OPERATIONS_MANAGER_WHATSAPP` (defaults to Abdullahi Rahinatu)
+- optional `ADMIN_COMMAND_WHATSAPP_NUMBERS` CSV for additional authorised staff
+
+If a non-authorised patient asks for admin summaries or reminders, the assistant refuses without exposing operational data.
+
+Supported MVP commands:
+
+- “Summary of bookings today”
+- “Appointments tomorrow”
+- “Appointments next week”
+- “Appointments next month”
+- “Remind patients tomorrow”
+- “Remind patients next week”
+- “Emergency summary”
+- “Admin help”
+
+Admin responses start with `Yes boss.` and return human-readable summaries, never raw JSON.
+
+Reminder commands currently target confirmed appointments only:
+
+- Tomorrow uses the 24-hour reminder format.
+- One week from today uses the 1-week reminder format.
+- Next month uses an early reminder message for confirmed appointments in the next 30 days.
+
+This is intentionally MVP-scoped. Broad marketing/bulk messaging should still use approved WhatsApp templates and human review before production use.
 
 ## Hybrid AI Conversation Style Requirement
 
@@ -209,12 +268,14 @@ Rules:
 
 Preserve intent routing like this:
 
-1. If message is consent-related, use consent template.
-2. If crisis/emergency/self-harm/overdose/panic keywords are detected, use crisis template and alert workflow.
-3. If patient has active booking session, use deterministic booking step handler.
-4. If message contains booking intent, start deterministic booking session.
-5. If message matches privacy, costs, hours/locations/contact, services, medical safety, or appointment-change intent, use deterministic template.
-6. Otherwise use Groq conversational response.
+1. If message is an authorised admin command, use the admin-command handler.
+2. If message is consent-related, use consent template.
+3. If crisis/emergency/self-harm/overdose/panic keywords are detected, use crisis template and alert workflow.
+4. If patient has active booking session, use deterministic booking step handler.
+5. If returning patient asks about appointments, doctor, cancellation, or rescheduling, use deterministic patient memory.
+6. If message contains booking intent, start deterministic booking session.
+7. If message matches privacy, costs, hours/locations/contact, services, medical safety, or appointment-change intent, use deterministic template.
+8. Otherwise use Groq conversational response.
 
 Examples:
 
@@ -223,6 +284,8 @@ Examples:
 - “What services do you offer?” -> deterministic service menu.
 - “Do you treat drug addiction?” -> deterministic service menu, then offer booking.
 - “Can I take diazepam?” -> safe medical disclaimer + encourage clinician consultation, no dosage advice.
+- “Summary of bookings today” from Dr K/secretary -> admin summary.
+- “Summary of bookings today” from a patient -> refused as admin-only.
 
 ## Verification Already Completed
 
@@ -233,6 +296,9 @@ Examples:
 - Vercel production deployment completed.
 - Supabase `send-notification` function deployed.
 - Supabase `ai-assistant` function deployed with hybrid routing.
+- Supabase `ai-assistant` function deployed with returning-patient memory and WhatsApp admin commands.
+- Supabase security hardening migration `20260509010000_security_linter_hardening.sql` applied.
+- Supabase linked linter at `error` and `warning` levels reports no schema errors after the hardening migration.
 - Production login route returns `200`.
 - Protected dashboard route redirects unauthenticated users to login.
 - Unauthenticated Edge Function calls return `401`.

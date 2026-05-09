@@ -57,8 +57,8 @@ export default async function ConversationsPage({
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Conversations</h1>
-        <p className="text-gray-500 text-sm">All patient WhatsApp conversations · {count?.toLocaleString() ?? 0} total</p>
+        <h1 className="text-2xl font-bold text-gray-900">Messages</h1>
+        <p className="text-gray-500 text-sm">Patient WhatsApp conversations · {count?.toLocaleString() ?? 0} records</p>
       </div>
 
       {/* ── Filters bar ── */}
@@ -74,7 +74,7 @@ export default async function ConversationsPage({
           />
         </div>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Sentiment</label>
+          <label className="block text-xs text-gray-500 mb-1">Patient mood / risk</label>
           <select name="sentiment" defaultValue={sentimentFilter} className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-serenity-500">
             <option value="">All</option>
             {SENTIMENT_OPTIONS.map((s) => (
@@ -83,7 +83,7 @@ export default async function ConversationsPage({
           </select>
         </div>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Type</label>
+          <label className="block text-xs text-gray-500 mb-1">Message type</label>
           <select name="type" defaultValue={typeFilter} className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-serenity-500">
             <option value="">All</option>
             {TYPE_OPTIONS.map((t) => (
@@ -93,7 +93,7 @@ export default async function ConversationsPage({
         </div>
         <div className="flex items-center gap-2 pb-0.5">
           <input type="checkbox" name="emergency" value="1" id="emergency-check" defaultChecked={emergencyOnly} className="rounded" />
-          <label htmlFor="emergency-check" className="text-sm text-gray-700">Emergency only</label>
+          <label htmlFor="emergency-check" className="text-sm text-gray-700">Urgent only</label>
         </div>
         <div className="flex gap-2">
           <button type="submit" className="px-4 py-2 bg-serenity-600 text-white rounded-lg text-sm font-medium hover:bg-serenity-700 transition">
@@ -135,9 +135,14 @@ export default async function ConversationsPage({
                           <p className="font-medium text-gray-900 text-sm">
                             {patient?.name ?? patient?.phone_number ?? 'Unknown'}
                           </p>
+                          {patient?.id && (
+                            <span className="text-xs px-2 py-0.5 bg-serenity-50 text-serenity-700 rounded-full font-medium">
+                              Known patient
+                            </span>
+                          )}
                           {conv.has_emergency_keywords && (
                             <span className="text-xs px-2 py-0.5 bg-red-100 text-red-700 rounded-full font-medium">
-                              EMERGENCY
+                              Urgent
                             </span>
                           )}
                           {conv.sentiment && (

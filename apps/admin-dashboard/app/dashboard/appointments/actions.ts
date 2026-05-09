@@ -43,6 +43,37 @@ export async function confirmAppointment(appointmentId: string, formData?: FormD
     }
   }
 
+  const { data: appointment, error: appointmentError } = await supabase
+    .from('appointments')
+    .select('doctor_id')
+    .eq('id', appointmentId)
+    .single()
+
+  if (appointmentError || !appointment) {
+    console.error('[appointments] appointment lookup failed:', appointmentError?.message ?? 'not found')
+    revalidatePath('/dashboard/appointments')
+    return
+  }
+
+  if (!appointment.doctor_id) {
+    const { error } = await supabase
+      .from('appointments')
+      .update({
+        status: 'pending',
+        calendar_sync_status: 'pending_no_matched_doctor',
+        calendar_sync_error: null,
+      })
+      .eq('id', appointmentId)
+
+    if (error) {
+      console.error('[appointments] missing doctor guard update failed:', error.message)
+    }
+
+    revalidatePath('/dashboard/appointments')
+    revalidatePath('/dashboard')
+    return
+  }
+
   const res = await callNotificationFunction({
     type: 'appointment_dashboard_confirmation',
     appointmentId,
@@ -61,6 +92,32 @@ export async function updateAppointmentStatus(
   status: AppointmentStatus,
 ): Promise<void> {
   const supabase = await createServerSupabaseClient()
+
+  if (status === 'confirmed') {
+    const { data: appointment, error: lookupError } = await supabase
+      .from('appointments')
+      .select('doctor_id')
+      .eq('id', appointmentId)
+      .single()
+
+    if (lookupError || !appointment?.doctor_id) {
+      const { error } = await supabase
+        .from('appointments')
+        .update({
+          status: 'pending',
+          calendar_sync_status: 'pending_no_matched_doctor',
+          calendar_sync_error: null,
+        })
+        .eq('id', appointmentId)
+
+      if (lookupError) console.error('[appointments] confirmation guard lookup failed:', lookupError.message)
+      if (error) console.error('[appointments] confirmation guard update failed:', error.message)
+
+      revalidatePath('/dashboard/appointments')
+      revalidatePath('/dashboard')
+      return
+    }
+  }
 
   const { error } = await supabase
     .from('appointments')

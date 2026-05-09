@@ -31,7 +31,7 @@ export default async function PatientsPage({
 
   function consentStatus(patient: typeof patients extends (infer T)[] | null ? T : never) {
     const consents = patient.consent_log as { consent_given: boolean; created_at: string }[] | null
-    if (!consents || consents.length === 0) return { label: 'No Consent', color: 'bg-red-100 text-red-700' }
+    if (!consents || consents.length === 0) return { label: 'Consent not recorded', color: 'bg-red-100 text-red-700' }
     const latest = consents[consents.length - 1]
     if (!latest.consent_given) return { label: 'Declined', color: 'bg-orange-100 text-orange-700' }
     return { label: 'Consented', color: 'bg-green-100 text-green-700' }
@@ -42,7 +42,7 @@ export default async function PatientsPage({
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Patients</h1>
-          <p className="text-gray-500 text-sm">{count?.toLocaleString() ?? 0} registered patients</p>
+          <p className="text-gray-500 text-sm">{count?.toLocaleString() ?? 0} active patient records</p>
         </div>
 
         {/* Search */}
@@ -81,9 +81,9 @@ export default async function PatientsPage({
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Patient</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Contact</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Location</th>
-                    <th className="text-left px-4 py-3 font-medium text-gray-600">NDPR Consent</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Data Consent</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
-                    <th className="text-left px-4 py-3 font-medium text-gray-600">Registered</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">First Seen</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -123,7 +123,7 @@ export default async function PatientsPage({
                         <td className="px-4 py-3">
                           {hasPendingDeletion ? (
                             <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">
-                              Deletion Pending
+                              Deletion requested
                             </span>
                           ) : (
                             <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">

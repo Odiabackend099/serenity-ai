@@ -1,0 +1,5 @@
+-- Remote baseline marker.
+-- This project was linked to an existing Supabase database whose first
+-- migration history entry is 20260417221622. Keep this file empty so the
+-- Supabase CLI can reconcile local and remote migration history without
+-- replaying the older documentation-style migrations in packages/supabase.

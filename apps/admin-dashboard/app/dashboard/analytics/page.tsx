@@ -82,29 +82,29 @@ export default async function AnalyticsPage() {
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
-        <p className="text-gray-500 text-sm">System-wide metrics · Updated in real-time</p>
+        <h1 className="text-2xl font-bold text-gray-900">Reports</h1>
+        <p className="text-gray-500 text-sm">Hospital activity, appointment trends, and AI support performance.</p>
       </div>
 
       {/* Top KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <p className="text-xs font-medium text-gray-500 mb-1">Total Patients</p>
+          <p className="text-xs font-medium text-gray-500 mb-1">Patients</p>
           <p className="text-3xl font-bold text-gray-900">{totalPatients?.toLocaleString() ?? 0}</p>
           <p className="text-xs text-green-600 mt-1">+{newPatients30d ?? 0} in 30 days</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <p className="text-xs font-medium text-gray-500 mb-1">Total Conversations</p>
+          <p className="text-xs font-medium text-gray-500 mb-1">Patient Conversations</p>
           <p className="text-3xl font-bold text-gray-900">{totalConversations?.toLocaleString() ?? 0}</p>
           <p className="text-xs text-serenity-600 mt-1">{conversations7d ?? 0} in last 7 days</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <p className="text-xs font-medium text-gray-500 mb-1">Appointment Rate</p>
+          <p className="text-xs font-medium text-gray-500 mb-1">Completed Appointments</p>
           <p className="text-3xl font-bold text-gray-900">{completionRate}%</p>
           <p className="text-xs text-gray-400 mt-1">{completedAppointments ?? 0} of {totalAppointments ?? 0} completed</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <p className="text-xs font-medium text-gray-500 mb-1">Avg Feedback Rating</p>
+          <p className="text-xs font-medium text-gray-500 mb-1">Average Feedback</p>
           <p className="text-3xl font-bold text-gray-900">{avgRating ?? '—'}<span className="text-lg text-gray-400">/5</span></p>
           <p className="text-xs text-gray-400 mt-1">{recentFeedback?.length ?? 0} responses collected</p>
         </div>
@@ -113,7 +113,7 @@ export default async function AnalyticsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         {/* Appointment Stats */}
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 className="font-semibold text-gray-900 mb-4">Appointments Overview</h2>
+          <h2 className="font-semibold text-gray-900 mb-4">Appointment Summary</h2>
           <div className="space-y-3">
             {[
               { label: 'Total', value: totalAppointments ?? 0, color: 'bg-serenity-500' },
@@ -138,15 +138,15 @@ export default async function AnalyticsPage() {
 
         {/* Emergency Stats */}
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 className="font-semibold text-gray-900 mb-4">Emergency Alerts</h2>
+          <h2 className="font-semibold text-gray-900 mb-4">Urgent Patient Alerts</h2>
           <div className="flex items-center gap-6 mb-4">
             <div>
               <p className="text-3xl font-bold text-red-600">{totalEmergencies ?? 0}</p>
-              <p className="text-xs text-gray-500">Total Alerts</p>
+              <p className="text-xs text-gray-500">Total urgent alerts</p>
             </div>
             <div>
               <p className="text-3xl font-bold text-green-600">{resolutionRate}%</p>
-              <p className="text-xs text-gray-500">Resolution Rate</p>
+              <p className="text-xs text-gray-500">Resolved</p>
             </div>
           </div>
           {totalAlerts > 0 && (
@@ -166,7 +166,7 @@ export default async function AnalyticsPage() {
 
         {/* Sentiment Distribution */}
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 className="font-semibold text-gray-900 mb-4">Conversation Sentiment</h2>
+          <h2 className="font-semibold text-gray-900 mb-4">Patient Mood / Risk</h2>
           {totalSentiments > 0 ? (
             <>
               {/* Bar visualization */}
@@ -195,9 +195,9 @@ export default async function AnalyticsPage() {
           )}
         </div>
 
-        {/* API Usage */}
+        {/* AI Usage */}
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 className="font-semibold text-gray-900 mb-4">API Usage Today</h2>
+          <h2 className="font-semibold text-gray-900 mb-4">AI Usage Today</h2>
           {apiQuotas && apiQuotas.length > 0 ? (
             <div className="space-y-3">
               {apiQuotas.map((quota) => {
@@ -226,7 +226,7 @@ export default async function AnalyticsPage() {
               })}
             </div>
           ) : (
-            <p className="text-gray-400 text-sm text-center py-6">No API usage recorded today</p>
+            <p className="text-gray-400 text-sm text-center py-6">No AI usage recorded today</p>
           )}
         </div>
       </div>

@@ -4,6 +4,15 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { updatePatient, sendManualMessage, requestPatientDeletion } from './actions'
 
+type AppointmentSummary = {
+  status: string | null
+  appointment_date: string
+  appointment_time: string | null
+  center?: string | null
+  service_type?: string | null
+  doctors?: { name?: string } | null
+}
+
 export default async function PatientDetailPage({
   params,
   searchParams,
@@ -48,6 +57,9 @@ export default async function PatientDetailPage({
   const latestConsent = consents?.at(-1)
   const hasPendingDeletion = (patient.deletion_requests as Array<{ status: string }> | null)?.some((d) => d.status === 'pending')
   const totalConvPages = Math.ceil((convCount ?? 0) / convPerPage)
+  const latestAppointment = getLatestRelevantAppointment(appointments ?? [])
+  const latestDoctor = latestAppointment?.doctors as { name?: string } | null | undefined
+  const openEmergency = (emergencyAlerts ?? []).find((alert) => !alert.resolved_at)
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -75,7 +87,7 @@ export default async function PatientDetailPage({
           </div>
           <div>
             {hasPendingDeletion ? (
-              <span className="text-xs px-2 py-1 bg-red-100 text-red-700 rounded-full font-medium">Deletion Pending</span>
+              <span className="text-xs px-2 py-1 bg-red-100 text-red-700 rounded-full font-medium">Deletion requested</span>
             ) : (
               <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-full font-medium">Active</span>
             )}
@@ -85,9 +97,9 @@ export default async function PatientDetailPage({
         {/* NDPR info strip */}
         <div className="pt-4 border-t border-gray-100 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
           <div>
-            <p className="text-xs text-gray-400 mb-0.5">NDPR Consent</p>
+            <p className="text-xs text-gray-400 mb-0.5">Data consent</p>
             <p className={`font-medium ${patient.consent_ndpr ? 'text-green-600' : 'text-red-600'}`}>
-              {patient.consent_ndpr ? '✓ Consented' : '✗ Not consented'}
+              {patient.consent_ndpr ? 'Consented' : 'Not consented'}
             </p>
           </div>
           {latestConsent?.created_at && (
@@ -97,12 +109,63 @@ export default async function PatientDetailPage({
             </div>
           )}
           <div>
-            <p className="text-xs text-gray-400 mb-0.5">Registered</p>
+            <p className="text-xs text-gray-400 mb-0.5">First seen</p>
             <p className="font-medium text-gray-700">{format(new Date(patient.created_at), 'MMM d, yyyy')}</p>
           </div>
           <div>
-            <p className="text-xs text-gray-400 mb-0.5">Total Conversations</p>
+            <p className="text-xs text-gray-400 mb-0.5">Messages</p>
             <p className="font-medium text-gray-700">{convCount?.toLocaleString() ?? 0}</p>
+          </div>
+        </div>
+
+        {/* ── Patient Memory ── */}
+        <div className="mt-4 pt-4 border-t border-gray-100">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">Patient memory</h2>
+              <p className="text-xs text-gray-500">
+                What Dr Ade uses to recognize returning patients on WhatsApp.
+              </p>
+            </div>
+            <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+              latestAppointment ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
+            }`}>
+              {latestAppointment ? 'Known patient' : 'No appointment yet'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+              <p className="text-xs text-gray-400 mb-1">Profile remembered</p>
+              <p className="text-sm font-medium text-gray-800">{patient.name ?? 'Name not provided'}</p>
+              <p className="text-xs text-gray-500 mt-1">
+                {[patient.gender, patient.location, patient.email].filter(Boolean).join(' · ') || 'No extra profile details yet'}
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+              <p className="text-xs text-gray-400 mb-1">Current appointment</p>
+              {latestAppointment ? (
+                <>
+                  <p className="text-sm font-medium text-gray-800">
+                    {format(new Date(`${latestAppointment.appointment_date}T00:00:00`), 'MMM d, yyyy')} at {latestAppointment.appointment_time?.slice(0, 5) ?? '--:--'}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {latestAppointment.center ?? 'Center not set'} · {appointmentStatusLabel(latestAppointment.status)}
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm text-gray-500">No active or recent appointment found</p>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+              <p className="text-xs text-gray-400 mb-1">Doctor / safety</p>
+              <p className="text-sm font-medium text-gray-800">{latestDoctor?.name ?? 'Doctor not assigned yet'}</p>
+              <p className={`text-xs mt-1 ${openEmergency ? 'text-red-600' : 'text-gray-500'}`}>
+                {openEmergency ? 'Open urgent alert needs review' : 'No open urgent alert'}
+              </p>
+            </div>
           </div>
         </div>
 
@@ -368,7 +431,7 @@ export default async function PatientDetailPage({
             <div>
               <h2 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
                 <span className="w-2 h-2 bg-red-500 rounded-full" />
-                Emergency Alerts
+                Urgent alerts
                 <span className="text-xs text-gray-400 font-normal">{emergencyAlerts.length}</span>
               </h2>
               <div className="bg-white rounded-xl border border-red-100 overflow-hidden divide-y divide-red-50">
@@ -404,4 +467,31 @@ export default async function PatientDetailPage({
       </div>
     </div>
   )
+}
+
+function getLatestRelevantAppointment(appointments: AppointmentSummary[]) {
+  const active = appointments
+    .filter((appt) => appt.status ? ['pending', 'confirmed', 'rescheduled'].includes(appt.status) : false)
+    .sort((a, b) => String(a.appointment_date).localeCompare(String(b.appointment_date)) || String(a.appointment_time ?? '').localeCompare(String(b.appointment_time ?? '')))
+
+  return active[0] ?? appointments[0] ?? null
+}
+
+function appointmentStatusLabel(status: string | null): string {
+  switch (status) {
+    case 'pending':
+      return 'Waiting for secretary confirmation'
+    case 'confirmed':
+      return 'Confirmed'
+    case 'rescheduled':
+      return 'Rescheduled'
+    case 'completed':
+      return 'Completed'
+    case 'cancelled':
+      return 'Cancelled'
+    case 'no_show':
+      return 'No-show'
+    default:
+      return 'Saved'
+  }
 }

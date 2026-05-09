@@ -297,6 +297,28 @@ async function confirmAppointmentFromDashboard(appointmentId: string): Promise<R
   const center = appointment.center ?? 'Galadimawa'
   const serviceType = appointment.service_type ?? 'Consultation'
 
+  if (!appointment.doctor_id || !doctor) {
+    const { error: updateError } = await supabase
+      .from('appointments')
+      .update({
+        status: 'pending',
+        calendar_sync_status: 'pending_no_matched_doctor',
+        calendar_sync_error: null,
+        reason: buildDashboardConfirmationReason(appointment.reason as string | null, 'pending_no_matched_doctor'),
+      })
+      .eq('id', appointmentId)
+
+    if (updateError) throw new Error(updateError.message)
+
+    return {
+      confirmed: false,
+      appointmentId,
+      calendarStatus: 'pending_no_matched_doctor',
+      message: 'Doctor assignment is required before appointment confirmation.',
+      results: { calendar: 'skipped', whatsapp: 'skipped', email: 'skipped', assignedDoctorWhatsapp: 'skipped' },
+    }
+  }
+
   let calendarEventId = appointment.google_calendar_event_id as string | null
   let calendarStatus = appointment.calendar_sync_status as string | null
   let calendarError: string | null = null

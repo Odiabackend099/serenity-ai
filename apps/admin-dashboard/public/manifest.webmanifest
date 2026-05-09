@@ -1,0 +1,26 @@
+{
+  "name": "Serenity Royale Hospital AI Dashboard",
+  "short_name": "Serenity AI",
+  "description": "Serenity Royale Hospital operations dashboard for appointments, WhatsApp AI, and emergency response.",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "orientation": "any",
+  "lang": "en",
+  "categories": ["health", "productivity"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

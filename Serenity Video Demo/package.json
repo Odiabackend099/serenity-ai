@@ -1,0 +1,37 @@
+{
+  "name": "serenity-video-demo",
+  "version": "1.0.0",
+  "description": "Serenity Royale Hospital AI demo video built with Remotion",
+  "private": true,
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@remotion/cli": "4.0.458",
+    "@remotion/tailwind-v4": "4.0.458",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.458",
+    "tailwindcss": "4.0.0"
+  },
+  "devDependencies": {
+    "@remotion/eslint-config-flat": "4.0.458",
+    "@types/react": "19.2.7",
+    "@types/web": "0.0.166",
+    "eslint": "9.19.0",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "remotion studio",
+    "build": "remotion bundle",
+    "generate:audio": "node scripts/generate-elevenlabs-audio.mjs",
+    "retime:voiceover": "node scripts/retime-existing-voiceover.mjs",
+    "mux:elevenlabs": "node scripts/mux-elevenlabs-video.mjs",
+    "lint": "eslint src && tsc",
+    "still": "remotion still SerenityDemo --frame=300 --scale=0.5 output/serenity-demo-still.png",
+    "render": "remotion render src/index.ts SerenityDemo serenity-royale-ai-demo.mp4 --codec=h264 --pixel-format=yuv420p --crf=18 --x264-preset=veryfast --concurrency=2 --timeout=60000",
+    "render:elevenlabs": "remotion render src/index.ts SerenityDemo serenity-royale-ai-demo-elevenlabs.mp4 --codec=h264 --pixel-format=yuv420p --crf=18 --x264-preset=veryfast --concurrency=2 --timeout=60000"
+  },
+  "sideEffects": [
+    "*.css"
+  ]
+}

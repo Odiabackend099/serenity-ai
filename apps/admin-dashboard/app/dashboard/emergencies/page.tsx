@@ -12,8 +12,9 @@ export default async function EmergenciesPage() {
     .order('created_at', { ascending: false })
     .limit(50)
 
-  const unresolved = alerts?.filter(a => !a.resolved_at) ?? []
-  const resolved = alerts?.filter(a => a.resolved_at) ?? []
+  const visibleAlerts = (alerts ?? []).filter((alert) => !isInternalTestAlert(alert))
+  const unresolved = visibleAlerts.filter(a => !a.resolved_at)
+  const resolved = visibleAlerts.filter(a => a.resolved_at)
 
   function alertTypeColor(type: string | null) {
     switch (type) {
@@ -40,8 +41,8 @@ export default async function EmergenciesPage() {
       <EmergencyRealtimeRefresher />
 
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Emergency Alerts</h1>
-        <p className="text-gray-500 text-sm">Crisis detections · Requires immediate attention · Auto-refreshes</p>
+        <h1 className="text-2xl font-bold text-gray-900">Emergencies</h1>
+        <p className="text-gray-500 text-sm">Urgent patient messages that need immediate staff attention. This page auto-refreshes.</p>
       </div>
 
       {/* Unresolved Alerts */}
@@ -49,7 +50,7 @@ export default async function EmergenciesPage() {
         <div className="mb-8">
           <h2 className="text-base font-semibold text-red-700 mb-3 flex items-center gap-2">
             <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-            Unresolved ({unresolved.length})
+            Needs action ({unresolved.length})
           </h2>
           <div className="space-y-4">
             {unresolved.map((alert) => {
@@ -92,7 +93,7 @@ export default async function EmergenciesPage() {
 
                         {alert.keywords_detected && alert.keywords_detected.length > 0 && (
                           <p className="text-sm text-gray-600 mb-2">
-                            Keywords: {alert.keywords_detected.join(', ')}
+                            Warning words detected: {alert.keywords_detected.join(', ')}
                           </p>
                         )}
 
@@ -105,13 +106,13 @@ export default async function EmergenciesPage() {
                         {/* Notification status */}
                         <div className="flex gap-3 text-xs text-gray-400 mb-3">
                           <span className={alert.whatsapp_notified_at ? 'text-green-600' : 'text-red-400'}>
-                            {alert.whatsapp_notified_at ? '✓' : '✗'} WhatsApp
+                            {alert.whatsapp_notified_at ? 'Sent' : 'Not sent'} WhatsApp
                           </span>
                           <span className={alert.email_notified_at ? 'text-green-600' : 'text-red-400'}>
-                            {alert.email_notified_at ? '✓' : '✗'} Email
+                            {alert.email_notified_at ? 'Sent' : 'Not sent'} Email
                           </span>
                           <span className={alert.sms_notified_at ? 'text-green-600' : 'text-red-400'}>
-                            {alert.sms_notified_at ? '✓' : '✗'} SMS
+                            {alert.sms_notified_at ? 'Sent' : 'Not sent'} SMS
                           </span>
                         </div>
 
@@ -123,7 +124,7 @@ export default async function EmergenciesPage() {
                                 type="submit"
                                 className="px-3 py-1.5 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition"
                               >
-                                Acknowledge
+                                Mark seen
                               </button>
                             </form>
                           )}
@@ -169,14 +170,14 @@ export default async function EmergenciesPage() {
               <path d="m5 13 4 4L19 7" />
             </svg>
           </div>
-          <p className="text-green-700 font-medium">No unresolved emergencies</p>
+          <p className="text-green-700 font-medium">No emergencies needing action</p>
         </div>
       )}
 
       {/* Resolved Alerts */}
       {resolved.length > 0 && (
         <div>
-          <h2 className="text-base font-semibold text-gray-600 mb-3">Resolved ({resolved.length})</h2>
+          <h2 className="text-base font-semibold text-gray-600 mb-3">Resolved cases ({resolved.length})</h2>
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             {resolved.map((alert, i) => {
               const patient = alert.patients as { name?: string; phone_number?: string } | null
@@ -194,7 +195,7 @@ export default async function EmergenciesPage() {
                     </div>
                     <div className="text-right flex-shrink-0">
                       <p className="text-xs text-gray-400">{format(new Date(alert.created_at), 'MMM d, HH:mm')}</p>
-                      <span className="text-xs text-green-600">✓ Resolved</span>
+                      <span className="text-xs text-green-600">Resolved</span>
                       {alert.resolved_at && (
                         <p className="text-xs text-gray-400 mt-0.5">
                           at {format(new Date(alert.resolved_at), 'HH:mm')}
@@ -229,15 +230,24 @@ function ResolveForm({ alertId }: { alertId: string }) {
       <input
         type="text"
         name="notes"
-        placeholder="Response notes (optional)"
+        placeholder="Response notes"
         className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs w-48 focus:outline-none focus:ring-1 focus:ring-serenity-500"
       />
       <button
         type="submit"
         className="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700 transition whitespace-nowrap"
       >
-        Mark Resolved
+        Mark resolved
       </button>
     </form>
   )
+}
+
+function isInternalTestAlert(alert: { alert_message?: string | null; response_notes?: string | null; patients?: unknown }) {
+  const patient = alert.patients as { name?: string | null; phone_number?: string | null } | null
+  const text = `${patient?.name ?? ''} ${alert.alert_message ?? ''} ${alert.response_notes ?? ''}`.toLowerCase()
+  return text.includes('stale test alert')
+    || text.includes('twilio two-way verification')
+    || text.startsWith('qa ')
+    || text.includes('health check')
 }

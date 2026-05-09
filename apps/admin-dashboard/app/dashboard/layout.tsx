@@ -21,9 +21,9 @@ export default async function DashboardLayout({
     .is('resolved_at', null)
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex min-h-dvh bg-slate-50">
       <Sidebar emergencyCount={emergencyCount ?? 0} />
-      <main className="flex-1 overflow-auto">
+      <main className="min-w-0 flex-1 overflow-y-auto pt-14 md:pt-0">
         {children}
       </main>
     </div>

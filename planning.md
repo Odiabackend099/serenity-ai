@@ -12,8 +12,8 @@ Serenity Royale Hospital (Abuja, Nigeria) needs a 24/7 AI receptionist to handle
 ## Dependencies and Assumptions
 - Supabase project created (PostgreSQL, Auth, Edge Functions, Storage)
 - Vercel account for frontend deployment
-- NVIDIA API key: `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`
-- Deepgram API key: `c0f60c39e1994c1c708649f89d37f3873c88974e`
+- NVIDIA API key: stored only in deployment secrets when enabled
+- Deepgram API key: stored only in deployment secrets
 - Twilio WhatsApp/SMS access for patient messaging and emergency notifications
 - Google Calendar API service account
 - Twilio account for SMS

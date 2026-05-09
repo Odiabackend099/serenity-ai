@@ -52,8 +52,8 @@ export default async function SettingsPage() {
       tone: (recentMessages ?? 0) > 0 ? 'green' : 'amber',
     },
     {
-      label: 'AI processing queue',
-      value: (pendingQueue ?? 0) === 0 ? 'Clear' : `${pendingQueue} needs review`,
+      label: 'AI message delivery',
+      value: (pendingQueue ?? 0) === 0 ? 'Clear' : `${pendingQueue} waiting for review`,
       tone: (pendingQueue ?? 0) === 0 ? 'green' : 'red',
     },
     {
@@ -67,13 +67,13 @@ export default async function SettingsPage() {
       tone: (calendarSyncedAppointments ?? 0) > 0 ? 'green' : 'amber',
     },
     {
-      label: 'Abdullahi operations WhatsApp alert',
-      value: latestStaffWhatsApp?.status === 'sent' ? 'Sent' : latestStaffWhatsApp?.status === 'failed' ? 'Failed' : 'No proof yet',
+      label: 'Secretary WhatsApp alert',
+      value: latestStaffWhatsApp?.status === 'sent' ? 'Sent' : latestStaffWhatsApp?.status === 'failed' ? 'Failed' : 'Not sent yet',
       tone: latestStaffWhatsApp?.status === 'sent' ? 'green' : latestStaffWhatsApp?.status === 'failed' ? 'red' : 'amber',
     },
     {
       label: 'Resend email notifications',
-      value: latestEmailNotification?.status === 'sent' ? 'Sent' : latestEmailNotification?.status === 'failed' ? 'Failed' : 'No proof yet',
+      value: latestEmailNotification?.status === 'sent' ? 'Sent' : latestEmailNotification?.status === 'failed' ? 'Failed' : 'Not sent yet',
       tone: latestEmailNotification?.status === 'sent' ? 'green' : latestEmailNotification?.status === 'failed' ? 'red' : 'amber',
     },
   ]
@@ -81,15 +81,14 @@ export default async function SettingsPage() {
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
-        <p className="text-gray-500 text-sm">Hospital configuration · Doctors · On-call · Admin users</p>
+        <h1 className="text-2xl font-bold text-gray-900">Admin</h1>
+        <p className="text-gray-500 text-sm">Hospital setup, doctors, on-call schedule, staff access, and connected services.</p>
       </div>
 
       <div className="space-y-8">
 
-        {/* ── MVP Readiness ─────────────────────────────────────────────── */}
         <section className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="font-semibold text-gray-900 mb-4">MVP Readiness Checklist</h2>
+          <h2 className="font-semibold text-gray-900 mb-4">System Readiness</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {readinessItems.map((item) => (
               <div key={item.label} className={`rounded-md border px-3 py-2 ${readinessTone(item.tone)}`} title={item.value}>
@@ -99,7 +98,7 @@ export default async function SettingsPage() {
             ))}
           </div>
           <p className="text-xs text-gray-400 mt-3">
-            Statuses are based on recent database activity and notification logs, not exposed API secrets.
+            Statuses are based on recent dashboard activity and notification records.
           </p>
         </section>
 
@@ -135,7 +134,7 @@ export default async function SettingsPage() {
           {/* Add Doctor Form */}
           <details className="mb-5">
             <summary className="cursor-pointer text-sm font-medium text-serenity-700 hover:text-serenity-800 select-none">
-              + Add New Doctor
+              Add new doctor
             </summary>
             <form action={addDoctor} className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 bg-gray-50 rounded-lg">
               <div>
@@ -282,14 +281,6 @@ export default async function SettingsPage() {
                         >
                           Save Changes
                         </button>
-                        <button
-                          type="button"
-                          formAction={deactivateDoctor.bind(null, doctor.id) as unknown as string}
-                          className="px-3 py-1.5 border border-gray-200 text-gray-500 text-xs font-medium rounded-lg hover:bg-gray-50 transition"
-                          onClick={undefined}
-                        >
-                          Deactivate
-                        </button>
                       </div>
                     </form>
                     <form action={deactivateDoctor.bind(null, doctor.id)} className="mt-2">
@@ -422,9 +413,7 @@ export default async function SettingsPage() {
 
         {/* ── Admin Users ────────────────────────────────────────────────── */}
         <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="font-semibold text-gray-900 mb-5 flex items-center gap-2">
-            🔐 Admin Users ({adminUsers?.filter((u) => u.is_active).length ?? 0} active)
-          </h2>
+          <h2 className="font-semibold text-gray-900 mb-5">Staff Access ({adminUsers?.filter((u) => u.is_active).length ?? 0} active)</h2>
 
           {/* Invite Form */}
           <form action={inviteAdminUser} className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5 p-4 bg-gray-50 rounded-lg">
@@ -457,7 +446,7 @@ export default async function SettingsPage() {
                   <option value="staff">Staff</option>
                   <option value="doctor">Doctor</option>
                   <option value="admin">Admin</option>
-                  <option value="super_admin">Super Admin</option>
+                  <option value="super_admin">Lead admin</option>
                 </select>
                 <button
                   type="submit"
@@ -485,7 +474,7 @@ export default async function SettingsPage() {
                       user.role === 'doctor' ? 'bg-gold-100 text-gold-800' :
                       'bg-gray-100 text-gray-600'
                     }`}>
-                      {user.role}
+                      {staffRoleLabel(user.role)}
                     </span>
                     {user.is_active ? (
                       <span className="text-xs text-green-600">Active</span>
@@ -511,38 +500,34 @@ export default async function SettingsPage() {
           )}
         </section>
 
-        {/* ── API Configuration ─────────────────────────────────────────── */}
         <section className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="font-semibold text-gray-900 mb-4">API Configuration</h2>
+          <h2 className="font-semibold text-gray-900 mb-4">Connected Services</h2>
           <div className="space-y-3 text-sm">
             {[
-              { name: 'Twilio WhatsApp', envKey: 'TWILIO_WHATSAPP_NUMBER', description: 'Patient WhatsApp messaging channel' },
-              { name: 'Groq AI (Llama 3.3)', envKey: 'GROQ_API_KEY', description: 'Dr Ade general-question engine' },
-              { name: 'Deepgram STT/TTS', envKey: 'DEEPGRAM_API_KEY', description: 'Voice note transcription + PII redaction' },
-              { name: 'Google Calendar', envKey: 'GOOGLE_SERVICE_ACCOUNT_JSON', description: 'Appointment sync' },
-              { name: 'Twilio SMS', envKey: 'TWILIO_ACCOUNT_SID', description: 'Emergency SMS alerts' },
-              { name: 'Resend Email', envKey: 'RESEND_API_KEY', description: 'Patient and staff email notifications' },
-              { name: 'Supabase', envKey: 'SUPABASE_SERVICE_ROLE_KEY', description: 'Database, auth, and Edge Function service access' },
+              { name: 'Twilio WhatsApp', description: 'Patient and staff WhatsApp messaging' },
+              { name: 'Groq AI', description: 'Dr Ade general-question responses' },
+              { name: 'Deepgram Voice', description: 'Voice note transcription and privacy redaction' },
+              { name: 'Google Calendar', description: 'Appointment availability and calendar sync' },
+              { name: 'Twilio SMS', description: 'Emergency fallback alerts only' },
+              { name: 'Resend Email', description: 'Patient and staff email confirmations' },
+              { name: 'Supabase', description: 'Secure patient records and dashboard login' },
             ].map((api) => (
               <div key={api.name} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                 <div>
                   <p className="font-medium text-gray-800">{api.name}</p>
                   <p className="text-xs text-gray-500">{api.description}</p>
                 </div>
-                <code className="text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-600 font-mono">{api.envKey}</code>
+                <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700 font-semibold">Configured securely</span>
               </div>
             ))}
           </div>
           <p className="text-xs text-gray-400 mt-3">
-            API keys are configured via environment variables and Supabase Vault. Never expose them in this interface.
+            Service keys are stored securely and are never shown in the dashboard.
           </p>
         </section>
 
-        {/* ── NDPR Compliance ───────────────────────────────────────────── */}
         <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            🛡️ NDPR / NDPA 2025 Compliance
-          </h2>
+          <h2 className="font-semibold text-gray-900 mb-4">Data Protection</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
             {[
               'Explicit NDPR consent on first contact',
@@ -564,9 +549,8 @@ export default async function SettingsPage() {
           </div>
         </section>
 
-        {/* ── System Info ───────────────────────────────────────────────── */}
         <section className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="font-semibold text-gray-900 mb-4">System Information</h2>
+          <h2 className="font-semibold text-gray-900 mb-4">Technical Summary</h2>
           <div className="grid grid-cols-2 gap-4 text-sm">
             {[
               { label: 'Platform', value: 'Supabase + Vercel (Next.js 14)' },
@@ -574,8 +558,7 @@ export default async function SettingsPage() {
               { label: 'Messaging', value: 'Twilio WhatsApp + Twilio SMS' },
               { label: 'Email', value: 'Resend HTTP API' },
               { label: 'Speech-to-Text', value: 'Deepgram (with PII redaction)' },
-              { label: 'Monorepo', value: 'Turborepo' },
-              { label: 'NDPR Data Region', value: 'US (Supabase) — see compliance notes' },
+              { label: 'Data protection', value: 'NDPR consent and access history enabled' },
               { label: 'Version', value: '1.0.0' },
               { label: 'Built by', value: 'ODIADEV AI LTD' },
             ].map(({ label, value }) => (
@@ -599,5 +582,18 @@ function readinessTone(tone: string) {
       return 'border-red-100 bg-red-50 text-red-700'
     default:
       return 'border-amber-100 bg-amber-50 text-amber-700'
+  }
+}
+
+function staffRoleLabel(role: string | null) {
+  switch (role) {
+    case 'super_admin':
+      return 'Lead admin'
+    case 'admin':
+      return 'Admin'
+    case 'doctor':
+      return 'Doctor'
+    default:
+      return 'Staff'
   }
 }

@@ -15,17 +15,17 @@ PROJECT_REF="iwkkhuozhfzmpvroprpv"
 PROJECT_URL="https://iwkkhuozhfzmpvroprpv.supabase.co"
 
 # Authentication
-ACCESS_TOKEN="sbp_2d4c7d9574b54e42c2602c71819dcef402eb757a"
-ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3a2todW96aGZ6bXB2cm9wcnB2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4MjA5OTIsImV4cCI6MjA5MTM5Njk5Mn0.qWHg14kgInQ4MwWhHBuczBBwrHPff5ULC5gtY4F24lE"
-SERVICE_ROLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3a2todW96aGZ6bXB2cm9wcnB2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTgyMDk5MiwiZXhwIjoyMDkxMzk2OTkyfQ.g9Kayah_1XWylFpcx4puXALIr3zM2Ph1dCIH99wtLD8"
+ACCESS_TOKEN="<SUPABASE_ACCESS_TOKEN>"
+ANON_KEY="<SUPABASE_ANON_KEY>"
+SERVICE_ROLE_KEY="<SUPABASE_SERVICE_ROLE_KEY>"
 
 # Database Connection
 DB_HOST="db.iwkkhuozhfzmpvroprpv.supabase.co"
 DB_PORT="5432"
 DB_NAME="postgres"
 DB_USER="postgres"
-DB_PASSWORD="Eguale@2021?"
-DB_URL="postgresql://postgres:Eguale%402021%3F@db.iwkkhuozhfzmpvroprpv.supabase.co:5432/postgres"
+DB_PASSWORD="<SUPABASE_DB_PASSWORD>"
+DB_URL="postgresql://postgres:<SUPABASE_DB_PASSWORD>@db.iwkkhuozhfzmpvroprpv.supabase.co:5432/postgres"
 
 # MCP Server
 MCP_URL="https://mcp.supabase.com/mcp?project_ref=iwkkhuozhfzmpvroprpv"
@@ -425,14 +425,14 @@ When applying migrations, verify you:
 ## 🔐 Variable Reference for AI
 
 **Fixed Variables (Do Not Change):**
-- `DB_PASSWORD` = `Eguale@2021?`
+- `DB_PASSWORD` = stored only in local/deployment secrets
 
 **Current Project Variables:**
 - `PROJECT_REF` = `iwkkhuozhfzmpvroprpv`
-- `ACCESS_TOKEN` = `sbp_2d4c7d9574b54e42c2602c71819dcef402eb757a`
+- `ACCESS_TOKEN` = `<SUPABASE_ACCESS_TOKEN>`
 - `PROJECT_URL` = `https://iwkkhuozhfzmpvroprpv.supabase.co`
 - `DB_HOST` = `db.iwkkhuozhfzmpvroprpv.supabase.co`
-- `DB_URL` = `postgresql://postgres:Eguale%402021%3F%5C@db.iwkkhuozhfzmpvroprpv.supabase.co:5432/postgres`
+- `DB_URL` = `postgresql://postgres:<SUPABASE_DB_PASSWORD>@db.iwkkhuozhfzmpvroprpv.supabase.co:5432/postgres`
 
 **When Using These Credentials:**
 1. Always use the values from this section

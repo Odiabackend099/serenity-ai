@@ -30,6 +30,8 @@ import {
 import {
   sendTextMessage,
   downloadMedia,
+  sendAppointmentReminder1Week,
+  sendAppointmentReminder24h,
 } from '../_shared/whatsapp.ts'
 import {
   sendAppointmentConfirmationEmail,
@@ -105,6 +107,57 @@ type StaffNotificationRecipient = {
   role: 'operations_manager' | 'primary_doctor' | 'assigned_doctor'
   name: string
   phone: string
+}
+
+type PatientContext = Pick<PatientRow, 'id' | 'phone_number' | 'name' | 'email' | 'gender' | 'location' | 'consent_ndpr' | 'consent_date' | 'created_at' | 'updated_at'>
+
+type AppointmentMemoryRow = {
+  id: string
+  appointment_date: string
+  appointment_time: string | null
+  center: string | null
+  service_type: string | null
+  reason: string | null
+  status: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show' | 'rescheduled'
+  created_at: string
+  created_from_whatsapp?: boolean | null
+  doctors?: { name?: string | null } | null
+}
+
+type EmergencyMemoryRow = {
+  id: string
+  alert_type: string | null
+  severity: string | null
+  created_at: string
+}
+
+type PatientMemoryContext = {
+  patient: PatientContext
+  latestAppointment: AppointmentMemoryRow | null
+  latestCompletedBooking: BookingSessionRow | null
+  recentConversation: AIMessage[]
+  unresolvedEmergency: EmergencyMemoryRow | null
+}
+
+type AdminDateRange = {
+  label: string
+  startDate: string
+  endDate: string
+  reminderType: '24h' | '1week' | 'early'
+}
+
+type AdminAppointmentRow = {
+  id: string
+  appointment_date: string
+  appointment_time: string | null
+  center: string | null
+  service_type: string | null
+  status: string
+  created_at: string
+  reminder_1week_sent?: boolean | null
+  reminder_24h_sent?: boolean | null
+  patients?: { name?: string | null; phone_number?: string | null; email?: string | null } | null
+  doctors?: { name?: string | null } | null
 }
 
 serve(async (req: Request) => {
@@ -232,13 +285,36 @@ async function processMessage(
   // ── Load patient ─────────────────────────────────────────────────────────
   const { data: patient } = await supabase
     .from('patients')
-    .select('id, name, consent_ndpr, email')
+    .select('id, phone_number, name, email, gender, location, consent_ndpr, consent_date, created_at, updated_at')
     .eq('id', patientId)
-    .single() as { data: (Pick<PatientRow, 'id' | 'name' | 'consent_ndpr'> & { email?: string }) | null }
+    .single() as { data: PatientContext | null }
 
   if (!patient) throw new Error(`Patient ${patientId} not found`)
 
   const preConsentEmergencyCheck = detectEmergency(messageText ?? '')
+
+  // ── Staff/admin WhatsApp commands ────────────────────────────────────────
+  // Dr K and the operations secretary can ask for appointment summaries and
+  // reminder sends directly on WhatsApp. Patients never receive admin data.
+  const adminCommand = await handleAdminWhatsAppCommand(supabase, phoneNumber, messageText ?? '')
+  if (adminCommand) {
+    await saveConversation(supabase, {
+      patientId,
+      messageType,
+      patientMessage: messageText,
+      patientMessageRedacted: messageText ? redactPII(messageText) : null,
+      aiResponse: adminCommand.response,
+      mediaUrl: queueItem.media_url as string | null,
+      sentiment: adminCommand.sentiment,
+      hasEmergencyKeywords: false,
+      whatsappMessageId,
+      transcription: null,
+      transcriptionRedacted: null,
+    })
+
+    await sendTextMessageSafely(phoneNumber, adminCommand.response, `admin command: ${adminCommand.label}`)
+    return
+  }
 
   // ── Emergency safety bypass before consent ───────────────────────────────
   // For critical safety concerns, use a fixed response and alert humans without
@@ -391,6 +467,27 @@ async function processMessage(
     return
   }
 
+  const patientMemory = await loadPatientMemoryContext(supabase, patient)
+  const memoryResult = await handleReturningPatientMemory(supabase, patientMemory, messageText ?? '')
+  if (memoryResult) {
+    await saveConversation(supabase, {
+      patientId,
+      messageType,
+      patientMessage: messageText,
+      patientMessageRedacted: messageRedacted,
+      aiResponse: memoryResult.response,
+      mediaUrl: queueItem.media_url as string | null,
+      sentiment: memoryResult.sentiment,
+      hasEmergencyKeywords: false,
+      whatsappMessageId,
+      transcription,
+      transcriptionRedacted,
+    })
+
+    await sendTextMessageSafely(phoneNumber, memoryResult.response, `patient memory: ${memoryResult.label}`)
+    return
+  }
+
   if (isBookingIntent(messageText ?? '')) {
     const response = await startBookingSession(supabase, patientId, phoneNumber)
 
@@ -442,9 +539,13 @@ async function processMessage(
   }
 
   // ── Build conversation history for AI ────────────────────────────────────
-  const history = await getConversationHistory(supabase, patientId, 8)
+  const history = patientMemory.recentConversation.length > 0
+    ? patientMemory.recentConversation
+    : await getConversationHistory(supabase, patientId, 8)
+  const memoryPrompt = buildPatientMemoryPrompt(patientMemory)
 
   const messages: AIMessage[] = [
+    ...(memoryPrompt ? [memoryPrompt] : []),
     ...history,
     { role: 'user', content: messageText ?? '[media]' },
   ]
@@ -472,6 +573,733 @@ async function processMessage(
 
   // ── Send AI response ──────────────────────────────────────────────────────
   await sendTextMessage(phoneNumber, finalResponse)
+}
+
+async function handleAdminWhatsAppCommand(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  phoneNumber: string,
+  message: string,
+): Promise<TemplateResult | null> {
+  const lower = normalizeDoctorMatchText(message)
+  if (!lower) return null
+
+  const looksLikeAdmin = isAdminInstruction(lower)
+  const isAdmin = isAuthorizedAdminPhone(phoneNumber)
+
+  if (!looksLikeAdmin) {
+    if (!isAdmin || !isAdminHelpIntent(lower)) return null
+    return {
+      label: 'admin_help',
+      sentiment: 'neutral',
+      response: buildAdminHelpResponse(),
+    }
+  }
+
+  if (!isAdmin) {
+    return {
+      label: 'admin_rejected',
+      sentiment: 'neutral',
+      response: 'I can only share admin reports or send patient reminders for authorised Serenity Royale Hospital staff. For patient support, reply "Book an appointment" or call +234 806 219 7384.',
+    }
+  }
+
+  if (isAdminHelpIntent(lower)) {
+    return {
+      label: 'admin_help',
+      sentiment: 'neutral',
+      response: buildAdminHelpResponse(),
+    }
+  }
+
+  if (matchesAny(lower, ['emergency summary', 'urgent summary', 'open emergencies', 'open urgent', 'crisis summary'])) {
+    return {
+      label: 'admin_emergency_summary',
+      sentiment: 'neutral',
+      response: await buildEmergencySummary(supabase),
+    }
+  }
+
+  if (matchesAny(lower, ['remind', 'send reminder', 'follow up', 'followup'])) {
+    const range = parseAdminDateRange(lower)
+    return {
+      label: `admin_reminders_${range.reminderType}`,
+      sentiment: 'neutral',
+      response: await sendAdminRequestedReminders(supabase, range),
+    }
+  }
+
+  if (matchesAny(lower, ['booked today', 'booking today', 'bookings today', 'booked for today', 'patients that booked today', 'patients booked today'])) {
+    return {
+      label: 'admin_bookings_today',
+      sentiment: 'neutral',
+      response: await buildBookingsCreatedSummary(supabase, 'today'),
+    }
+  }
+
+  if (matchesAny(lower, ['appointment summary', 'appointments today', 'appointments tomorrow', 'appointments next week', 'appointments next month', 'patients due', 'schedule today', 'schedule tomorrow'])) {
+    const range = parseAdminDateRange(lower)
+    return {
+      label: 'admin_appointment_summary',
+      sentiment: 'neutral',
+      response: await buildAppointmentRangeSummary(supabase, range),
+    }
+  }
+
+  if (matchesAny(lower, ['daily summary', 'today summary', 'summary today', 'operations summary'])) {
+    const [bookings, emergencies] = await Promise.all([
+      buildBookingsCreatedSummary(supabase, 'today'),
+      buildEmergencySummary(supabase),
+    ])
+    return {
+      label: 'admin_daily_summary',
+      sentiment: 'neutral',
+      response: `${bookings}\n\n${emergencies.replace(/^Yes boss\\.\\s*/, '')}`,
+    }
+  }
+
+  return {
+    label: 'admin_help',
+    sentiment: 'neutral',
+    response: buildAdminHelpResponse(),
+  }
+}
+
+function isAdminInstruction(message: string): boolean {
+  return matchesAny(message, [
+    'admin',
+    'booked today',
+    'bookings today',
+    'appointment summary',
+    'appointments today',
+    'appointments tomorrow',
+    'appointments next week',
+    'appointments next month',
+    'patients due',
+    'remind all patients',
+    'send reminder',
+    'follow up patients',
+    'patient follow up',
+    'follow up reminder',
+    'followup reminder',
+    'open emergencies',
+    'emergency summary',
+    'urgent summary',
+    'operations summary',
+    'daily summary',
+  ])
+}
+
+function isAdminHelpIntent(message: string): boolean {
+  return matchesAny(message, ['admin help', 'boss help', 'what can you do', 'commands', 'command list'])
+}
+
+function buildAdminHelpResponse(): string {
+  return `Yes boss. I can help with Serenity operations on WhatsApp.
+
+Try:
+• "Summary of bookings today"
+• "Appointments tomorrow"
+• "Appointments next week"
+• "Remind patients tomorrow"
+• "Remind patients next week"
+• "Emergency summary"
+
+For safety, I only accept these admin commands from Dr K and the operations secretary.`
+}
+
+function isAuthorizedAdminPhone(phoneNumber: string): boolean {
+  const configured = [
+    Deno.env.get('PRIMARY_DOCTOR_WHATSAPP') ?? '+2348062197384',
+    Deno.env.get('OPERATIONS_MANAGER_WHATSAPP') ?? '+2348072023652',
+    Deno.env.get('HOSPITAL_MD_WHATSAPP'),
+    Deno.env.get('HOSPITAL_MD_PHONE'),
+    Deno.env.get('STAFF_BOOKING_WHATSAPP_TO'),
+    ...(Deno.env.get('ADMIN_COMMAND_WHATSAPP_NUMBERS') ?? '').split(','),
+  ]
+    .filter((phone): phone is string => Boolean(phone?.trim()))
+    .map(normalizePhoneDigits)
+
+  const inbound = normalizePhoneDigits(phoneNumber)
+  return configured.some((phone) => phone === inbound)
+}
+
+function normalizePhoneDigits(phone: string): string {
+  return phone.replace(/\D/g, '')
+}
+
+function parseAdminDateRange(message: string): AdminDateRange {
+  const today = todayInLagos()
+
+  if (message.includes('next month') || message.includes('month')) {
+    const start = addDays(today, 1)
+    const end = addDays(today, 30)
+    return {
+      label: 'next 30 days',
+      startDate: toIsoDate(start),
+      endDate: toIsoDate(end),
+      reminderType: 'early',
+    }
+  }
+
+  if (message.includes('next week') || message.includes('one week') || message.includes('1 week')) {
+    const target = addDays(today, 7)
+    return {
+      label: 'one week from today',
+      startDate: toIsoDate(target),
+      endDate: toIsoDate(target),
+      reminderType: '1week',
+    }
+  }
+
+  if (message.includes('tomorrow') || message.includes('24h') || message.includes('24 hour')) {
+    const target = addDays(today, 1)
+    return {
+      label: 'tomorrow',
+      startDate: toIsoDate(target),
+      endDate: toIsoDate(target),
+      reminderType: '24h',
+    }
+  }
+
+  return {
+    label: 'today',
+    startDate: toIsoDate(today),
+    endDate: toIsoDate(today),
+    reminderType: '24h',
+  }
+}
+
+async function buildAppointmentRangeSummary(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  range: AdminDateRange,
+): Promise<string> {
+  const appointments = await getAppointmentsByDateRange(supabase, range, { includeCancelled: false })
+
+  if (appointments.length === 0) {
+    return `Yes boss. I found no active appointments for ${range.label}.`
+  }
+
+  return `Yes boss. I found ${appointments.length} active appointment${appointments.length === 1 ? '' : 's'} for ${range.label}.\n\n${formatAdminAppointmentList(appointments)}`
+}
+
+async function buildBookingsCreatedSummary(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  label: string,
+): Promise<string> {
+  const range = getLagosCreatedAtRange(0)
+  const { data } = await supabase
+    .from('appointments')
+    .select('id, appointment_date, appointment_time, center, service_type, status, created_at, patients(name, phone_number), doctors(name)')
+    .gte('created_at', range.startIso)
+    .lt('created_at', range.endIso)
+    .order('created_at', { ascending: false })
+    .limit(25)
+
+  const appointments = (data ?? []) as AdminAppointmentRow[]
+
+  if (appointments.length === 0) {
+    return `Yes boss. No appointment bookings have been created ${label}.`
+  }
+
+  return `Yes boss. ${appointments.length} appointment booking${appointments.length === 1 ? '' : 's'} created ${label}.\n\n${formatAdminAppointmentList(appointments)}`
+}
+
+async function buildEmergencySummary(supabase: ReturnType<typeof getSupabaseClient>): Promise<string> {
+  const { data } = await supabase
+    .from('emergency_alerts')
+    .select('id, alert_type, severity, created_at, patients(name, phone_number)')
+    .is('resolved_at', null)
+    .order('created_at', { ascending: false })
+    .limit(10)
+
+  if (!data || data.length === 0) {
+    return 'Yes boss. There are no open urgent alerts right now.'
+  }
+
+  const rows = data.map((alert, index) => {
+    const patient = alert.patients as { name?: string | null; phone_number?: string | null } | null
+    return `${index + 1}. ${patient?.name ?? 'Unknown patient'} - ${alert.severity ?? 'urgent'} ${String(alert.alert_type ?? 'alert').replace(/_/g, ' ')}. Phone: ${patient?.phone_number ?? 'Not provided'}`
+  })
+
+  return `Yes boss. There ${data.length === 1 ? 'is' : 'are'} ${data.length} open urgent alert${data.length === 1 ? '' : 's'}.\n\n${rows.join('\n')}`
+}
+
+async function sendAdminRequestedReminders(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  range: AdminDateRange,
+): Promise<string> {
+  const appointments = await getAppointmentsByDateRange(supabase, range, {
+    includeCancelled: false,
+    status: 'confirmed',
+  })
+
+  if (appointments.length === 0) {
+    return `Yes boss. I found no confirmed appointments needing reminders for ${range.label}.`
+  }
+
+  const results = { sent: 0, skipped: 0, failed: 0 }
+
+  for (const appointment of appointments) {
+    const patient = appointment.patients
+    const doctor = appointment.doctors
+    const phone = patient?.phone_number
+
+    if (!phone) {
+      results.skipped++
+      continue
+    }
+
+    if (range.reminderType === '24h' && appointment.reminder_24h_sent) {
+      results.skipped++
+      continue
+    }
+
+    if (range.reminderType === '1week' && appointment.reminder_1week_sent) {
+      results.skipped++
+      continue
+    }
+
+    try {
+      const formattedDate = formatDisplayDate(appointment.appointment_date)
+      const time = appointment.appointment_time?.slice(0, 5) ?? '09:00'
+      const center = appointment.center ?? 'Galadimawa'
+
+      if (range.reminderType === '24h') {
+        await sendAppointmentReminder24h(phone, patient?.name ?? 'Patient', formattedDate, time, center)
+        await supabase.from('appointments').update({ reminder_24h_sent: true }).eq('id', appointment.id)
+      } else if (range.reminderType === '1week') {
+        await sendAppointmentReminder1Week(phone, patient?.name ?? 'Patient', formattedDate, time, center, doctor?.name ?? 'Serenity doctor')
+        await supabase.from('appointments').update({ reminder_1week_sent: true }).eq('id', appointment.id)
+      } else {
+        await sendTextMessage(
+          phone,
+          `Dear ${patient?.name ?? 'Patient'}, this is an early reminder for your upcoming Serenity Royale Hospital appointment.\n\nDate: ${formattedDate}\nTime: ${time}\nCenter: ${center}\nDoctor: ${doctor?.name ?? 'Serenity doctor'}\n\nTo reschedule, reply here or call +234 806 219 7384.`,
+        )
+      }
+
+      results.sent++
+    } catch (err) {
+      console.error(`[ai-assistant] Admin requested reminder failed for ${appointment.id}:`, (err as Error).message)
+      results.failed++
+    }
+  }
+
+  return `Yes boss. Reminder run for ${range.label} is complete.
+
+Sent: ${results.sent}
+Skipped: ${results.skipped}
+Failed: ${results.failed}
+
+${results.failed > 0 ? 'Some reminders failed. Please check the dashboard notification status or Twilio limits.' : 'All eligible reminders were handled.'}`
+}
+
+async function getAppointmentsByDateRange(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  range: AdminDateRange,
+  options: { includeCancelled?: boolean; status?: string } = {},
+): Promise<AdminAppointmentRow[]> {
+  let query = supabase
+    .from('appointments')
+    .select('id, appointment_date, appointment_time, center, service_type, status, created_at, reminder_1week_sent, reminder_24h_sent, patients(name, phone_number, email), doctors(name)')
+    .gte('appointment_date', range.startDate)
+    .lte('appointment_date', range.endDate)
+    .order('appointment_date', { ascending: true })
+    .order('appointment_time', { ascending: true })
+    .limit(50)
+
+  if (!options.includeCancelled) query = query.neq('status', 'cancelled')
+  if (options.status) query = query.eq('status', options.status)
+
+  const { data } = await query
+  return (data ?? []) as AdminAppointmentRow[]
+}
+
+function formatAdminAppointmentList(appointments: AdminAppointmentRow[]): string {
+  const rows = appointments.slice(0, 12).map((appointment, index) => {
+    const patient = appointment.patients
+    const doctor = appointment.doctors
+    return `${index + 1}. ${patient?.name ?? 'Unknown patient'} - ${appointment.service_type ?? 'Consultation'} on ${formatDisplayDate(appointment.appointment_date)} at ${appointment.appointment_time?.slice(0, 5) ?? '--:--'} (${appointment.center ?? 'Center not set'}). Doctor: ${doctor?.name ?? 'Not assigned'}. Status: ${appointmentStatusForAdmin(appointment.status)}. Phone: ${patient?.phone_number ?? 'Not provided'}`
+  })
+
+  if (appointments.length > 12) {
+    rows.push(`...and ${appointments.length - 12} more in the dashboard.`)
+  }
+
+  return rows.join('\n')
+}
+
+function appointmentStatusForAdmin(status: string): string {
+  switch (status) {
+    case 'pending':
+      return 'Needs secretary confirmation'
+    case 'confirmed':
+      return 'Confirmed'
+    case 'completed':
+      return 'Completed'
+    case 'cancelled':
+      return 'Cancelled'
+    case 'no_show':
+      return 'No-show'
+    case 'rescheduled':
+      return 'Rescheduled'
+    default:
+      return status
+  }
+}
+
+function getLagosCreatedAtRange(offsetDays: number): { startIso: string; endIso: string } {
+  const lagosDate = addDays(todayInLagos(), offsetDays)
+  const startUtc = new Date(lagosDate.getTime() - 60 * 60 * 1000)
+  const endUtc = new Date(startUtc.getTime() + 24 * 3600000)
+  return { startIso: startUtc.toISOString(), endIso: endUtc.toISOString() }
+}
+
+async function loadPatientMemoryContext(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  patient: PatientContext,
+): Promise<PatientMemoryContext> {
+  const today = toIsoDate(todayInLagos())
+
+  const { data: upcomingAppointments } = await supabase
+    .from('appointments')
+    .select('id, appointment_date, appointment_time, center, service_type, reason, status, created_at, created_from_whatsapp, doctors(name)')
+    .eq('patient_id', patient.id)
+    .in('status', ['pending', 'confirmed', 'rescheduled'])
+    .gte('appointment_date', today)
+    .order('appointment_date', { ascending: true })
+    .order('appointment_time', { ascending: true })
+    .limit(1)
+
+  let latestAppointment = (upcomingAppointments?.[0] ?? null) as AppointmentMemoryRow | null
+
+  if (!latestAppointment) {
+    const { data: latestAppointments } = await supabase
+      .from('appointments')
+      .select('id, appointment_date, appointment_time, center, service_type, reason, status, created_at, created_from_whatsapp, doctors(name)')
+      .eq('patient_id', patient.id)
+      .order('appointment_date', { ascending: false })
+      .order('appointment_time', { ascending: false })
+      .limit(1)
+
+    latestAppointment = (latestAppointments?.[0] ?? null) as AppointmentMemoryRow | null
+  }
+
+  const { data: latestCompletedBooking } = await supabase
+    .from('booking_sessions')
+    .select('*')
+    .eq('patient_id', patient.id)
+    .eq('status', 'completed')
+    .order('completed_at', { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle()
+
+  const { data: unresolvedEmergency } = await supabase
+    .from('emergency_alerts')
+    .select('id, alert_type, severity, created_at')
+    .eq('patient_id', patient.id)
+    .is('resolved_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  const recentConversation = await getConversationHistory(supabase, patient.id, 8)
+
+  return {
+    patient,
+    latestAppointment,
+    latestCompletedBooking: latestCompletedBooking as BookingSessionRow | null,
+    recentConversation,
+    unresolvedEmergency: unresolvedEmergency as EmergencyMemoryRow | null,
+  }
+}
+
+async function handleReturningPatientMemory(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  context: PatientMemoryContext,
+  message: string,
+): Promise<TemplateResult | null> {
+  const lower = normalizeDoctorMatchText(message)
+  if (!lower) return null
+
+  const appointment = context.latestAppointment
+  const hasActiveAppointment = appointment ? isActiveAppointmentStatus(appointment.status) : false
+
+  if (hasActiveAppointment && appointment && wasLastAssistantReschedulePrompt(context)) {
+    const parsedDate = parseAppointmentDate(message)
+    const parsedTime = parseAppointmentTime(message)
+    if (parsedDate.error || parsedTime.error) {
+      return {
+        label: 'appointment_reschedule_retry',
+        sentiment: 'neutral',
+        response: `Please send both the new date and time in one message. For example: "Monday 10am" or "2026-06-17 14:30".\n\nYour current appointment is still saved until the secretary confirms a change.`,
+      }
+    }
+
+    const { error } = await supabase
+      .from('appointments')
+      .update({
+        appointment_date: parsedDate.value,
+        appointment_time: parsedTime.value,
+        status: 'pending',
+        calendar_sync_status: 'pending_reschedule_review',
+        reason: `${appointment.reason ?? 'Appointment'} | Patient requested reschedule via WhatsApp`,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', appointment.id)
+      .in('status', ['pending', 'confirmed', 'rescheduled'])
+
+    if (error) throw new Error(`Failed to request reschedule for appointment ${appointment.id}: ${error.message}`)
+
+    return {
+      label: 'appointment_reschedule_saved',
+      sentiment: 'neutral',
+      response: `Your reschedule request has been saved for secretary confirmation.\n\nService: ${appointment.service_type ?? 'Consultation'}\nNew date: ${formatDisplayDate(parsedDate.value!)}\nNew time: ${parsedTime.value!.slice(0, 5)}\nCenter: ${appointment.center ?? 'Not selected'}\nDoctor: ${getAppointmentDoctorName(appointment) ?? 'Doctor not assigned yet'}\n\nOur team will confirm the final slot shortly.`,
+    }
+  }
+
+  if (hasActiveAppointment && (isCancelAppointmentConfirmation(lower) || (isSimpleYes(lower) && wasLastAssistantCancelPrompt(context)))) {
+    const { error } = await supabase
+      .from('appointments')
+      .update({
+        status: 'cancelled',
+        cancellation_reason: 'Cancelled by patient via WhatsApp',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', appointment!.id)
+      .in('status', ['pending', 'confirmed', 'rescheduled'])
+
+    if (error) throw new Error(`Failed to cancel appointment ${appointment!.id}: ${error.message}`)
+
+    return {
+      label: 'appointment_cancel_confirmed',
+      sentiment: 'neutral',
+      response: `Your appointment has been cancelled.\n\n${formatAppointmentForPatient(appointment!, { includeStatus: false })}\n\nIf you need a new appointment, reply "Book an appointment" and I will help you start again.`,
+    }
+  }
+
+  if (isCancelAppointmentIntent(lower)) {
+    if (!hasActiveAppointment || !appointment) {
+      return {
+        label: 'appointment_cancel_no_active',
+        sentiment: 'neutral',
+        response: `I do not see an active appointment for you right now.\n\nIf you want to book one, reply "Book an appointment". For urgent help, call +234 806 219 7384.`,
+      }
+    }
+
+    return {
+      label: 'appointment_cancel_request',
+      sentiment: 'neutral',
+      response: `I can help cancel this appointment:\n\n${formatAppointmentForPatient(appointment)}\n\nPlease reply "YES CANCEL" to confirm, or "KEEP APPOINTMENT" to leave it unchanged.`,
+    }
+  }
+
+  if (isKeepAppointmentIntent(lower) && hasActiveAppointment && appointment) {
+    return {
+      label: 'appointment_keep',
+      sentiment: 'neutral',
+      response: `No problem. Your appointment is still saved.\n\n${formatAppointmentForPatient(appointment)}\n\nIf you need to change it, reply "Reschedule appointment".`,
+    }
+  }
+
+  if (hasActiveAppointment && isRescheduleIntent(lower) && appointment) {
+    return {
+      label: 'appointment_reschedule_request',
+      sentiment: 'neutral',
+      response: `I can help you request a change. Your current appointment is:\n\n${formatAppointmentForPatient(appointment)}\n\nPlease send your preferred new date and time. The secretary will review availability and confirm the final slot.`,
+    }
+  }
+
+  if (isDoctorStatusIntent(lower)) {
+    if (!appointment) {
+      return {
+        label: 'doctor_status_no_appointment',
+        sentiment: 'neutral',
+        response: `I do not see an appointment on your record yet. If you want to see a Serenity doctor, reply "Book an appointment".`,
+      }
+    }
+
+    const doctorName = getAppointmentDoctorName(appointment)
+    return {
+      label: 'doctor_status',
+      sentiment: 'neutral',
+      response: doctorName
+        ? `Your doctor is ${doctorName}.\n\n${formatAppointmentForPatient(appointment)}`
+        : `A doctor has not been assigned yet. Your request is saved for secretary review.\n\n${formatAppointmentForPatient(appointment)}`,
+    }
+  }
+
+  if (hasActiveAppointment && isBookAppointmentIntentWithExistingAppointment(lower) && appointment) {
+    return {
+      label: 'booking_intent_existing_appointment',
+      sentiment: 'neutral',
+      response: `Welcome back${context.patient.name ? `, ${firstName(context.patient.name)}` : ''}. I can see you already have an appointment request:\n\n${formatAppointmentForPatient(appointment)}\n\nReply "CHANGE APPOINTMENT" to update this request, or "START NEW BOOKING" if you want to book a separate appointment.`,
+    }
+  }
+
+  if (isAppointmentStatusIntent(lower) || (isSimpleGreeting(lower) && hasActiveAppointment && appointment)) {
+    return {
+      label: 'appointment_status',
+      sentiment: 'neutral',
+      response: `Welcome back${context.patient.name ? `, ${firstName(context.patient.name)}` : ''}.\n\n${formatAppointmentForPatient(appointment!)}\n\nYou can reply "Cancel appointment", "Reschedule appointment", "Who is my doctor?", or "Speak to the team".`,
+    }
+  }
+
+  if (isSpeakToTeamIntent(lower)) {
+    return {
+      label: 'speak_to_team',
+      sentiment: 'neutral',
+      response: `You can speak with Serenity Royale Hospital directly on +234 806 219 7384 or +234 811 689 1990.\n\nIf this is urgent, please call now. If you want an appointment, reply "Book an appointment".`,
+    }
+  }
+
+  if (isSimpleGreeting(lower) && isKnownPatient(context.patient) && !appointment) {
+    return {
+      label: 'returning_patient_no_appointment',
+      sentiment: 'positive',
+      response: `Welcome back${context.patient.name ? `, ${firstName(context.patient.name)}` : ''}. I do not see an active appointment request for you right now.\n\nHow can I help today?\n\n• Book an appointment\n• Ask about our services\n• Learn about costs\n• Get emergency support`,
+    }
+  }
+
+  return null
+}
+
+function buildPatientMemoryPrompt(context: PatientMemoryContext): AIMessage | null {
+  if (!isKnownPatient(context.patient) && !context.latestAppointment && !context.unresolvedEmergency) return null
+
+  const appointmentSummary = context.latestAppointment
+    ? formatAppointmentForPatient(context.latestAppointment)
+    : 'No appointment found.'
+  const emergencySummary = context.unresolvedEmergency
+    ? `${context.unresolvedEmergency.severity ?? 'Urgent'} ${context.unresolvedEmergency.alert_type ?? 'alert'} opened ${context.unresolvedEmergency.created_at}.`
+    : 'No unresolved emergency alert.'
+
+  return {
+    role: 'system',
+    content: `Patient context from Serenity database. Use only these verified facts; do not invent appointment details or doctor assignment.
+Patient: ${context.patient.name ?? 'Unknown'} (${context.patient.phone_number ?? 'phone not available'})
+Email: ${context.patient.email ?? 'Not provided'}
+Gender: ${context.patient.gender ?? 'Not provided'}
+Location: ${context.patient.location ?? 'Not provided'}
+Consent: ${context.patient.consent_ndpr ? 'Recorded' : 'Not recorded'}
+Latest appointment: ${appointmentSummary}
+Emergency status: ${emergencySummary}`,
+  }
+}
+
+function formatAppointmentForPatient(
+  appointment: AppointmentMemoryRow,
+  options: { includeStatus?: boolean } = {},
+): string {
+  const includeStatus = options.includeStatus ?? true
+  const status = appointmentStatusForPatient(appointment.status)
+  const doctorName = getAppointmentDoctorName(appointment) ?? 'Doctor not assigned yet'
+  const date = appointment.appointment_date ? formatDisplayDate(appointment.appointment_date) : 'Date not set'
+  const time = appointment.appointment_time?.slice(0, 5) ?? 'Time not set'
+  const lines = [
+    includeStatus ? `Status: ${status}` : null,
+    `Service: ${appointment.service_type ?? 'Consultation'}`,
+    `Date: ${date}`,
+    `Time: ${time}`,
+    `Center: ${appointment.center ?? 'Not selected'}`,
+    `Doctor: ${doctorName}`,
+  ]
+
+  return lines.filter(Boolean).join('\n')
+}
+
+function appointmentStatusForPatient(status: AppointmentMemoryRow['status']): string {
+  switch (status) {
+    case 'pending':
+      return 'Pending secretary confirmation'
+    case 'confirmed':
+      return 'Confirmed'
+    case 'rescheduled':
+      return 'Rescheduled'
+    case 'completed':
+      return 'Completed'
+    case 'cancelled':
+      return 'Cancelled'
+    case 'no_show':
+      return 'Missed appointment'
+    default:
+      return 'Saved'
+  }
+}
+
+function getAppointmentDoctorName(appointment: AppointmentMemoryRow): string | null {
+  return appointment.doctors?.name ?? null
+}
+
+function isActiveAppointmentStatus(status: AppointmentMemoryRow['status']): boolean {
+  return ['pending', 'confirmed', 'rescheduled'].includes(status)
+}
+
+function isKnownPatient(patient: PatientContext): boolean {
+  return Boolean(patient.name || patient.email || patient.gender || patient.location)
+}
+
+function firstName(name: string): string {
+  return normalizeWhitespace(name).split(' ')[0] ?? name
+}
+
+function isSimpleGreeting(message: string): boolean {
+  return ['hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening'].includes(message)
+}
+
+function isAppointmentStatusIntent(message: string): boolean {
+  return matchesAny(message, [
+    'my appointment',
+    'appointment status',
+    'did you book',
+    'is it booked',
+    'do i have appointment',
+    'do i have an appointment',
+    'when is my appointment',
+    'what about my appointment',
+    'confirm my appointment',
+  ])
+}
+
+function isBookAppointmentIntentWithExistingAppointment(message: string): boolean {
+  return matchesAny(message, ['book appointment', 'book an appointment', 'schedule appointment', 'see a doctor', 'book another appointment'])
+}
+
+function isCancelAppointmentIntent(message: string): boolean {
+  return matchesAny(message, ['cancel appointment', 'cancel my appointment', 'cancel it', 'cancel booking'])
+}
+
+function isCancelAppointmentConfirmation(message: string): boolean {
+  return ['yes cancel', 'confirm cancel', 'confirm cancel appointment', 'cancel it yes', 'yes cancel appointment'].some((phrase) => message.includes(phrase))
+}
+
+function isSimpleYes(message: string): boolean {
+  return ['yes', 'y', 'confirm', 'ok', 'okay', 'proceed'].includes(message)
+}
+
+function wasLastAssistantCancelPrompt(context: PatientMemoryContext): boolean {
+  const lastAssistantMessage = [...context.recentConversation].reverse().find((turn) => turn.role === 'assistant')
+  return Boolean(lastAssistantMessage?.content.toLowerCase().includes('yes cancel'))
+}
+
+function wasLastAssistantReschedulePrompt(context: PatientMemoryContext): boolean {
+  const lastAssistantMessage = [...context.recentConversation].reverse().find((turn) => turn.role === 'assistant')
+  return Boolean(lastAssistantMessage?.content.toLowerCase().includes('preferred new date and time'))
+}
+
+function isKeepAppointmentIntent(message: string): boolean {
+  return matchesAny(message, ['keep appointment', 'dont cancel', 'do not cancel', 'leave it', 'keep it'])
+}
+
+function isRescheduleIntent(message: string): boolean {
+  return matchesAny(message, ['reschedule', 'change appointment', 'change my appointment', 'move appointment', 'move my appointment'])
+}
+
+function isDoctorStatusIntent(message: string): boolean {
+  return matchesAny(message, ['who is my doctor', 'which doctor', 'doctor assigned', 'assigned doctor', 'my doctor'])
+}
+
+function isSpeakToTeamIntent(message: string): boolean {
+  return matchesAny(message, ['speak to team', 'talk to staff', 'talk to human', 'speak to someone', 'call me', 'human'])
 }
 
 /**

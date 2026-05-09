@@ -1,0 +1,19 @@
+When office hours end, patient intent does not.
+
+This is Serenity Royale Hospital AI, created by ODIADEV AI.
+
+A patient in Abuja searches for rehabilitation support and lands on the Serenity website. The WhatsApp button is clear, familiar, and available at the moment of need.
+
+The patient opens WhatsApp. Dr Ade responds calmly, explains the next step, and guides the patient through a short booking flow: name, location, preferred doctor, center, date, and time.
+
+The appointment request is captured after hours instead of being lost.
+
+Then the system routes the right alerts. The patient gets confirmation. Abdullahi, the secretary, receives the action message for dashboard follow-up. Dr. K receives the oversight alert. And if the patient selected Dr. Grace, she receives the appointment summary too.
+
+Inside the dashboard, the team can see pending AI bookings, message delivery, calendar review, recent AI activity, and system readiness.
+
+If no doctor was selected, staff can assign one, confirm the appointment, retry alerts, and keep the patient informed without touching the database.
+
+For crisis messages, the AI does not pretend to be a doctor. It responds safely, gives urgent contact guidance, and escalates to the care team.
+
+Serenity AI keeps the hospital front door open: supporting patients, protecting after-hours demand, and aligning the people responsible for care.
