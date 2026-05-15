@@ -5,13 +5,13 @@ import './globals.css'
 export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
-  applicationName: 'Serenity AI',
-  title: 'Serenity Royale Hospital AI Dashboard',
+  applicationName: 'Serenity Staff Dashboard',
+  title: 'Serenity Royale Hospital Staff Dashboard',
   description: 'Hospital management dashboard for Serenity Royale Hospital',
   manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
-    title: 'Serenity AI',
+    title: 'Serenity Staff',
     statusBarStyle: 'black-translucent',
   },
   formatDetection: {

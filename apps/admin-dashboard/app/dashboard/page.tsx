@@ -132,16 +132,16 @@ async function getDashboardData(supabase: Awaited<ReturnType<typeof createServer
 export default async function DashboardPage() {
   const supabase = await createServerSupabaseClient()
   const data = await getDashboardData(supabase)
-  const queueTone: Tone = data.stats.failedMessages > 0 ? 'red' : data.stats.queuedMessages > 0 ? 'amber' : 'green'
+  const messageTone: Tone = data.stats.failedMessages > 0 ? 'red' : data.stats.queuedMessages > 0 ? 'amber' : 'green'
   const whatsappTone: Tone = data.lastInbound && data.lastConversation ? 'green' : 'amber'
   const calendarTone: Tone = data.stats.calendarNeedsReview > 0 ? 'amber' : 'green'
   const staffTone: Tone = data.lastStaffWhatsapp?.status === 'sent' ? 'green' : data.lastStaffWhatsapp?.status === 'failed' ? 'red' : 'amber'
 
   const metrics = [
-    { label: 'Patients', value: data.stats.totalPatients, detail: 'Active patient records', tone: 'blue' as Tone, icon: 'patients' },
-    { label: 'Today', value: data.stats.todayAppointments, detail: 'Appointments booked today', tone: 'green' as Tone, icon: 'calendar' },
-    { label: 'Booking requests', value: data.stats.pendingAiAppointments, detail: 'Waiting for secretary review', tone: data.stats.pendingAiAppointments ? 'amber' as Tone : 'green' as Tone, icon: 'clock' },
-    { label: 'Emergencies', value: data.stats.unresolvedEmergencies, detail: 'Unresolved alerts', tone: data.stats.unresolvedEmergencies ? 'red' as Tone : 'green' as Tone, icon: 'alert' },
+    { label: 'Bookings today', value: data.stats.todayAppointments, detail: 'Visits scheduled for today', tone: 'green' as Tone, icon: 'calendar' },
+    { label: 'Waiting bookings', value: data.stats.pendingAiAppointments, detail: 'Need secretary confirmation', tone: data.stats.pendingAiAppointments ? 'amber' as Tone : 'green' as Tone, icon: 'clock' },
+    { label: 'Urgent messages', value: data.stats.unresolvedEmergencies, detail: 'Need staff attention', tone: data.stats.unresolvedEmergencies ? 'red' as Tone : 'green' as Tone, icon: 'alert' },
+    { label: 'Patient chats', value: data.stats.activeConversations, detail: 'Messages in the last 24 hours', tone: 'blue' as Tone, icon: 'message' },
   ]
 
   return (
@@ -156,61 +156,24 @@ export default async function DashboardPage() {
             className="mt-1 h-12 w-12 rounded-lg border border-gold-200 object-cover bg-serenity-950 shadow-sm"
           />
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gold-700">Serenity AI command center</p>
-            <h1 className="text-2xl font-bold text-gray-950 mt-1">Operations Dashboard</h1>
-            <p className="text-gray-500 text-sm mt-1">{format(new Date(), 'EEEE, MMMM d, yyyy')} · WhatsApp, bookings, calendar, and alert readiness</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gold-700">Serenity Royale Hospital</p>
+            <h1 className="text-2xl font-bold text-gray-950 mt-1">Today</h1>
+            <p className="text-gray-500 text-sm mt-1">{format(new Date(), 'EEEE, MMMM d, yyyy')} - bookings, urgent messages, and patient chats.</p>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <a href="/dashboard/appointments?view=pending" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100">
-            Review pending bookings
+            Confirm bookings
           </a>
           <a href="/dashboard/conversations" className="rounded-md border border-gold-200 bg-white px-3 py-2 text-xs font-semibold text-serenity-800 hover:bg-gold-50">
-            Open AI conversations
+            Open patient chats
           </a>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4 mb-5">
-        {metrics.map((metric) => (
-          <MetricCard key={metric.label} {...metric} />
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 mb-6">
-        <HealthCard
-          title="WhatsApp AI"
-          tone={whatsappTone}
-          value={data.lastConversation ? 'Live' : 'Needs activity'}
-          detail={data.lastInbound ? `Last inbound ${timeAgo(data.lastInbound.created_at)}` : 'No inbound message found'}
-          icon="message"
-        />
-        <HealthCard
-          title="AI message delivery"
-          tone={queueTone}
-          value={data.stats.failedMessages > 0 ? 'Action needed' : data.stats.queuedMessages > 0 ? 'Processing' : 'Clear'}
-          detail={`${data.stats.queuedMessages} waiting · ${data.stats.failedMessages} need review`}
-          icon="queue"
-        />
-        <HealthCard
-          title="Calendar"
-          tone={calendarTone}
-          value={data.stats.calendarNeedsReview > 0 ? 'Review needed' : 'Healthy'}
-          detail={`${data.stats.calendarNeedsReview} upcoming appointment${data.stats.calendarNeedsReview === 1 ? '' : 's'} not synced`}
-          icon="calendar"
-        />
-        <HealthCard
-          title="Secretary alerts"
-          tone={staffTone}
-          value={statusText(data.lastStaffWhatsapp)}
-          detail={data.lastStaffWhatsapp ? `Last Abdullahi alert ${timeAgo(data.lastStaffWhatsapp.created_at)}` : 'No operations alert logged yet'}
-          icon="bell"
-        />
-      </div>
-
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
         <section className="xl:col-span-2 bg-white border border-gray-200 rounded-lg overflow-hidden">
-          <PanelHeader title="Pending AI appointment requests" href="/dashboard/appointments?view=pending" />
+          <PanelHeader title="Bookings waiting for confirmation" href="/dashboard/appointments?view=pending" />
           {data.pendingAppts.length > 0 ? (
             <div className="divide-y divide-gray-100">
               {data.pendingAppts.map((appt) => (
@@ -218,12 +181,12 @@ export default async function DashboardPage() {
               ))}
             </div>
           ) : (
-            <EmptyState title="No pending AI bookings" detail="New WhatsApp appointment requests will appear here for secretary review." />
+            <EmptyState title="No bookings waiting" detail="New WhatsApp booking requests will appear here for confirmation." />
           )}
         </section>
 
         <section className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-          <PanelHeader title="Today’s schedule" href="/dashboard/appointments" />
+          <PanelHeader title="Today's schedule" href="/dashboard/appointments" />
           {data.todayAppts.length > 0 ? (
             <div className="divide-y divide-gray-100">
               {data.todayAppts.map((appt) => (
@@ -231,14 +194,20 @@ export default async function DashboardPage() {
               ))}
             </div>
           ) : (
-            <EmptyState title="No appointments today" detail="Confirmed and pending appointments for today will show here." />
+            <EmptyState title="No bookings today" detail="Confirmed and waiting bookings for today will show here." />
           )}
         </section>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 mt-5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4 my-5">
+        {metrics.map((metric) => (
+          <MetricCard key={metric.label} {...metric} />
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
         <section className="xl:col-span-2 bg-white border border-gray-200 rounded-lg overflow-hidden">
-          <PanelHeader title="Recent AI activity" href="/dashboard/conversations" />
+          <PanelHeader title="Recent patient chats" href="/dashboard/conversations" />
           {data.recentConversations.length > 0 ? (
             <div className="divide-y divide-gray-100">
               {data.recentConversations.map((conversation) => (
@@ -246,27 +215,54 @@ export default async function DashboardPage() {
               ))}
             </div>
           ) : (
-            <EmptyState title="No AI activity yet" detail="Patient messages and Dr Ade replies will appear after WhatsApp traffic starts." />
+            <EmptyState title="No patient chats yet" detail="Patient messages and Dr Ade replies will appear after WhatsApp messages arrive." />
           )}
         </section>
 
         <section className="bg-white border border-gray-200 rounded-lg p-4">
-          <h2 className="font-semibold text-gray-950 text-sm">System readiness</h2>
+          <h2 className="font-semibold text-gray-950 text-sm">Quick checks</h2>
           <div className="mt-4 space-y-3">
-            <ReadinessRow label="Two-way WhatsApp" tone={whatsappTone} value={data.lastConversation ? 'Verified' : 'Needs live test'} />
-            <ReadinessRow label="Patient confirmation" tone={notificationTone(data.lastPatientWhatsapp)} value={statusText(data.lastPatientWhatsapp)} />
-            <ReadinessRow label="Secretary WhatsApp alert" tone={staffTone} value={statusText(data.lastStaffWhatsapp)} />
-            <ReadinessRow label="Email notifications" tone={notificationTone(data.lastEmail)} value={statusText(data.lastEmail)} />
-            <ReadinessRow label="Calendar sync" tone={calendarTone} value={data.stats.calendarNeedsReview > 0 ? 'Needs review' : 'Ready'} />
+            <ReadinessRow label="WhatsApp messages" tone={whatsappTone} value={data.lastConversation ? 'Active' : 'Needs live test'} />
+            <ReadinessRow label="Patient updates" tone={notificationTone(data.lastPatientWhatsapp)} value={statusText(data.lastPatientWhatsapp)} />
+            <ReadinessRow label="Secretary alerts" tone={staffTone} value={statusText(data.lastStaffWhatsapp)} />
+            <ReadinessRow label="Hospital calendar" tone={calendarTone} value={data.stats.calendarNeedsReview > 0 ? 'Needs check' : 'Ready'} />
           </div>
-          {data.lastConversation && (
-            <div className="mt-5 rounded-md bg-gray-50 border border-gray-100 p-3">
-              <p className="text-xs font-semibold text-gray-700">Latest AI reply</p>
-              <p className="mt-1 text-xs text-gray-500 line-clamp-4">{data.lastConversation.ai_response ?? 'No response text saved'}</p>
-            </div>
-          )}
         </section>
       </div>
+
+      <details className="mt-5 rounded-lg border border-gray-200 bg-white">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-gray-700">Manager/support checks</summary>
+        <div className="grid grid-cols-1 gap-4 border-t border-gray-100 p-4 xl:grid-cols-4">
+          <HealthCard
+            title="WhatsApp activity"
+            tone={whatsappTone}
+            value={data.lastConversation ? 'Active' : 'Needs activity'}
+            detail={data.lastInbound ? `Last message ${timeAgo(data.lastInbound.created_at)}` : 'No recent patient message found'}
+            icon="message"
+          />
+          <HealthCard
+            title="Message delivery"
+            tone={messageTone}
+            value={data.stats.failedMessages > 0 ? 'Action needed' : data.stats.queuedMessages > 0 ? 'Sending' : 'Clear'}
+            detail={`${data.stats.queuedMessages} waiting - ${data.stats.failedMessages} need review`}
+            icon="queue"
+          />
+          <HealthCard
+            title="Hospital calendar"
+            tone={calendarTone}
+            value={data.stats.calendarNeedsReview > 0 ? 'Needs check' : 'Ready'}
+            detail={`${data.stats.calendarNeedsReview} upcoming booking${data.stats.calendarNeedsReview === 1 ? '' : 's'} need check`}
+            icon="calendar"
+          />
+          <HealthCard
+            title="Secretary alerts"
+            tone={staffTone}
+            value={statusText(data.lastStaffWhatsapp)}
+            detail={data.lastStaffWhatsapp ? `Last secretary alert ${timeAgo(data.lastStaffWhatsapp.created_at)}` : 'No secretary alert logged yet'}
+            icon="bell"
+          />
+        </div>
+      </details>
     </div>
   )
 }
@@ -288,7 +284,7 @@ function MetricCard({ label, value, detail, tone, icon }: { label: string; value
 
 function HealthCard({ title, value, detail, tone, icon }: { title: string; value: string; detail: string; tone: Tone; icon: string }) {
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-4">
+    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
       <div className="flex items-start gap-3">
         <Icon name={icon} className={`h-9 w-9 rounded-md p-2 ${toneClasses(tone).soft}`} />
         <div className="min-w-0">
@@ -324,12 +320,12 @@ function AppointmentLine({ appointment, urgent = false }: { appointment: Appoint
           <div className="flex items-center gap-2 flex-wrap">
             <p className="text-sm font-semibold text-gray-950 truncate">{patient?.name ?? patient?.phone_number ?? 'Unknown patient'}</p>
             {urgent && <Badge tone="amber">Needs confirmation</Badge>}
-            {appointment.created_from_whatsapp && <Badge tone="green">WhatsApp AI</Badge>}
+            {appointment.created_from_whatsapp && <Badge tone="green">WhatsApp booking</Badge>}
           </div>
           <p className="text-xs text-gray-500 mt-1 truncate">
-            {format(new Date(`${appointment.appointment_date}T00:00:00`), 'MMM d')} · {appointment.appointment_time?.slice(0, 5) ?? '--:--'} · {appointment.center ?? 'No center'}
+            {format(new Date(`${appointment.appointment_date}T00:00:00`), 'MMM d')} - {appointment.appointment_time?.slice(0, 5) ?? '--:--'} - {appointment.center ?? 'Branch not set'}
           </p>
-          <p className="text-xs text-gray-400 mt-0.5 truncate">{appointment.service_type ?? 'Consultation'} · {doctor?.name ?? 'Doctor not assigned yet'}</p>
+          <p className="text-xs text-gray-400 mt-0.5 truncate">{appointment.service_type ?? 'Consultation'} - {doctor?.name ?? 'Doctor not assigned yet'}</p>
         </div>
         <div className="flex flex-col items-end gap-1 flex-shrink-0">
           <Badge tone={statusTone}>{appointmentStatusLabel(appointment.status)}</Badge>
@@ -353,7 +349,7 @@ function ConversationLine({ conversation }: { conversation: ConversationRow }) {
             {conversation.has_emergency_keywords && <Badge tone="red">Urgent language</Badge>}
           </div>
           <p className="text-xs text-gray-600 mt-1 truncate">Patient: {conversation.patient_message ?? '(media)'}</p>
-          <p className="text-xs text-serenity-700 mt-0.5 truncate">Dr Ade: {conversation.ai_response ?? 'No AI response saved'}</p>
+          <p className="text-xs text-serenity-700 mt-0.5 truncate">Dr Ade: {conversation.ai_response ?? 'No saved reply'}</p>
         </div>
         <p className="text-[11px] text-gray-400 flex-shrink-0">{timeAgo(conversation.created_at)}</p>
       </div>
@@ -432,15 +428,15 @@ function statusText(notification: NotificationRow | null): string {
 
 function appointmentStatusLabel(status: string | null): string {
   if (status === 'pending') return 'Needs confirmation'
-  if (status === 'no_show') return 'No-show'
+  if (status === 'no_show') return 'Did not attend'
   if (!status) return 'Needs confirmation'
   return status.charAt(0).toUpperCase() + status.slice(1)
 }
 
 function calendarLabel(status: string | null): string {
-  if (status === 'synced') return 'Calendar synced'
+  if (status === 'synced') return 'Calendar ready'
   if (!status) return 'Calendar pending'
-  if (status.includes('error') || status.includes('conflict') || status.includes('busy')) return 'Calendar warning'
+  if (status.includes('error') || status.includes('conflict') || status.includes('busy')) return 'Schedule needs check'
   return 'Calendar pending'
 }
 

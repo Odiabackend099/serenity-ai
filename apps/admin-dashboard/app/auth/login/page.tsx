@@ -1,17 +1,41 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 
 export default function LoginPage() {
   const router = useRouter()
-  const supabase = createClient()
+  const searchParams = useSearchParams()
+  const [supabase] = useState(() => createClient())
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const redirectTarget = useMemo(() => {
+    const next = searchParams.get('next')
+    return next && next.startsWith('/') ? next : '/dashboard'
+  }, [searchParams])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function redirectAuthenticatedUser() {
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!cancelled && session) {
+        router.replace(redirectTarget)
+        router.refresh()
+      }
+    }
+
+    void redirectAuthenticatedUser()
+
+    return () => {
+      cancelled = true
+    }
+  }, [redirectTarget, router, supabase])
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
@@ -24,7 +48,7 @@ export default function LoginPage() {
       setError(error.message)
       setLoading(false)
     } else {
-      router.push('/dashboard')
+      router.push(redirectTarget)
       router.refresh()
     }
   }
@@ -42,7 +66,7 @@ export default function LoginPage() {
             className="w-20 h-20 rounded-lg object-cover mx-auto mb-4 border border-gold-200 shadow-sm bg-serenity-950"
           />
           <h1 className="text-2xl font-bold text-gray-900">Serenity Royale Hospital</h1>
-          <p className="text-gray-500 text-sm mt-1">Serenity Royale Hospital Admin</p>
+          <p className="text-gray-500 text-sm mt-1">Staff Dashboard</p>
         </div>
 
         {error && (
@@ -53,10 +77,11 @@ export default function LoginPage() {
 
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
               Email Address
             </label>
             <input
+              id="email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -67,10 +92,11 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
               Password
             </label>
             <input
+              id="password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -90,7 +116,7 @@ export default function LoginPage() {
         </form>
 
         <p className="text-center text-xs text-gray-400 mt-6">
-          Serenity Royale Hospital AI Dashboard · NDPR Compliant · Secure Access
+          Serenity Royale Hospital Staff Dashboard · Secure Access
         </p>
       </div>
     </div>

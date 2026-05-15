@@ -1,5 +1,6 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { format } from 'date-fns'
+import { redirect } from 'next/navigation'
 import {
   addDoctor,
   updateDoctor,
@@ -13,6 +14,18 @@ import {
 
 export default async function SettingsPage() {
   const supabase = await createServerSupabaseClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  const { data: staffUser } = await supabase
+    .from('admin_users')
+    .select('role')
+    .eq('email', user?.email ?? '')
+    .eq('is_active', true)
+    .maybeSingle()
+
+  if (staffUser?.role !== 'super_admin') {
+    redirect('/dashboard')
+  }
+
   const recentMessageCutoff = new Date()
   recentMessageCutoff.setHours(recentMessageCutoff.getHours() - 24)
 
@@ -45,14 +58,16 @@ export default async function SettingsPage() {
 
   const activeDoctors = doctors?.filter((d) => d.is_active) ?? []
   const inactiveDoctors = doctors?.filter((d) => !d.is_active) ?? []
+  const whatsappProvider = process.env.WHATSAPP_PROVIDER ?? 'meta'
+  const liveWhatsAppSender = '+234 702 674 3998'
   const readinessItems = [
     {
-      label: 'Twilio WhatsApp two-way',
+      label: 'Meta WhatsApp live number',
       value: (recentMessages ?? 0) > 0 ? 'Verified in last 24h' : 'Needs live message',
       tone: (recentMessages ?? 0) > 0 ? 'green' : 'amber',
     },
     {
-      label: 'AI message delivery',
+      label: 'Message delivery',
       value: (pendingQueue ?? 0) === 0 ? 'Clear' : `${pendingQueue} waiting for review`,
       tone: (pendingQueue ?? 0) === 0 ? 'green' : 'red',
     },
@@ -62,8 +77,8 @@ export default async function SettingsPage() {
       tone: (pendingAiAppointments ?? 0) === 0 ? 'green' : 'amber',
     },
     {
-      label: 'Google Calendar sync',
-      value: (calendarSyncedAppointments ?? 0) > 0 ? 'Synced appointments found' : 'No synced appointment yet',
+      label: 'Hospital calendar',
+      value: (calendarSyncedAppointments ?? 0) > 0 ? 'Calendar bookings found' : 'No calendar booking yet',
       tone: (calendarSyncedAppointments ?? 0) > 0 ? 'green' : 'amber',
     },
     {
@@ -72,7 +87,7 @@ export default async function SettingsPage() {
       tone: latestStaffWhatsApp?.status === 'sent' ? 'green' : latestStaffWhatsApp?.status === 'failed' ? 'red' : 'amber',
     },
     {
-      label: 'Resend email notifications',
+      label: 'Email updates',
       value: latestEmailNotification?.status === 'sent' ? 'Sent' : latestEmailNotification?.status === 'failed' ? 'Failed' : 'Not sent yet',
       tone: latestEmailNotification?.status === 'sent' ? 'green' : latestEmailNotification?.status === 'failed' ? 'red' : 'amber',
     },
@@ -81,7 +96,7 @@ export default async function SettingsPage() {
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Admin</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Hospital Setup</h1>
         <p className="text-gray-500 text-sm">Hospital setup, doctors, on-call schedule, staff access, and connected services.</p>
       </div>
 
@@ -100,6 +115,41 @@ export default async function SettingsPage() {
           <p className="text-xs text-gray-400 mt-3">
             Statuses are based on recent dashboard activity and notification records.
           </p>
+        </section>
+
+        <section className="bg-white rounded-lg border border-gray-200 p-6">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="font-semibold text-gray-900">WhatsApp Service</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Meta WhatsApp Cloud API is the live patient and staff messaging service. Twilio remains backup only.
+              </p>
+            </div>
+            <span className={`w-fit rounded-full px-3 py-1 text-xs font-bold uppercase ${whatsappProvider === 'meta' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+              {whatsappProvider === 'meta' ? 'Meta live' : 'Backup active'}
+            </span>
+          </div>
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+            <div>
+              <p className="text-gray-500 text-xs mb-0.5">Live patient number</p>
+              <p className="text-gray-800 font-medium">{liveWhatsAppSender}</p>
+            </div>
+            <div>
+              <p className="text-gray-500 text-xs mb-0.5">Backup provider</p>
+              <p className="text-gray-800 font-medium">Twilio, backup only</p>
+            </div>
+            <div>
+              <p className="text-gray-500 text-xs mb-0.5">Live message route</p>
+              <p className="text-gray-800 font-medium break-all">https://iwkkhuozhfzmpvroprpv.supabase.co/functions/v1/whatsapp-webhook</p>
+            </div>
+            <div>
+              <p className="text-gray-500 text-xs mb-0.5">Current provider setting</p>
+              <p className="text-gray-800 font-medium">{whatsappProvider}</p>
+            </div>
+          </div>
+          <div className="mt-4 rounded-md border border-emerald-100 bg-emerald-50 p-3 text-sm text-emerald-800">
+            Live Meta messaging is the expected setting. Switch to Twilio only for a planned backup procedure.
+          </div>
         </section>
 
         {/* ── Hospital Information ───────────────────────────────────────── */}
@@ -504,10 +554,11 @@ export default async function SettingsPage() {
           <h2 className="font-semibold text-gray-900 mb-4">Connected Services</h2>
           <div className="space-y-3 text-sm">
             {[
-              { name: 'Twilio WhatsApp', description: 'Patient and staff WhatsApp messaging' },
+              { name: 'Meta WhatsApp', description: 'Live patient and staff WhatsApp messaging' },
+              { name: 'Twilio WhatsApp', description: 'Backup WhatsApp sender only' },
               { name: 'Groq AI', description: 'Dr Ade general-question responses' },
               { name: 'Deepgram Voice', description: 'Voice note transcription and privacy redaction' },
-              { name: 'Google Calendar', description: 'Appointment availability and calendar sync' },
+              { name: 'Google Calendar', description: 'Appointment availability and hospital calendar' },
               { name: 'Twilio SMS', description: 'Emergency fallback alerts only' },
               { name: 'Resend Email', description: 'Patient and staff email confirmations' },
               { name: 'Supabase', description: 'Secure patient records and dashboard login' },
@@ -555,7 +606,7 @@ export default async function SettingsPage() {
             {[
               { label: 'Platform', value: 'Supabase + Vercel (Next.js 14)' },
               { label: 'AI Engine', value: 'Groq — Llama 3.3' },
-              { label: 'Messaging', value: 'Twilio WhatsApp + Twilio SMS' },
+              { label: 'Messaging', value: 'Meta WhatsApp Cloud API + Twilio backup' },
               { label: 'Email', value: 'Resend HTTP API' },
               { label: 'Speech-to-Text', value: 'Deepgram (with PII redaction)' },
               { label: 'Data protection', value: 'NDPR consent and access history enabled' },

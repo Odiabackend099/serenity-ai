@@ -41,7 +41,7 @@ export default async function EmergenciesPage() {
       <EmergencyRealtimeRefresher />
 
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Emergencies</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Urgent Messages</h1>
         <p className="text-gray-500 text-sm">Urgent patient messages that need immediate staff attention. This page auto-refreshes.</p>
       </div>
 

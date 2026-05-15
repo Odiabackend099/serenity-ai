@@ -14,6 +14,13 @@ export default async function DashboardLayout({
     redirect('/auth/login')
   }
 
+  const { data: staffUser } = await supabase
+    .from('admin_users')
+    .select('role')
+    .eq('email', user.email ?? '')
+    .eq('is_active', true)
+    .maybeSingle()
+
   // Fetch live unresolved emergency count for sidebar badge
   const { count: emergencyCount } = await supabase
     .from('emergency_alerts')
@@ -22,7 +29,7 @@ export default async function DashboardLayout({
 
   return (
     <div className="flex min-h-dvh bg-slate-50">
-      <Sidebar emergencyCount={emergencyCount ?? 0} />
+      <Sidebar emergencyCount={emergencyCount ?? 0} staffRole={staffUser?.role ?? 'staff'} />
       <main className="min-w-0 flex-1 overflow-y-auto pt-14 md:pt-0">
         {children}
       </main>

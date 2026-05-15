@@ -1,6 +1,7 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { format } from 'date-fns'
 import Link from 'next/link'
+import { redirect } from 'next/navigation'
 
 const PER_PAGE = 50
 
@@ -47,6 +48,18 @@ export default async function AuditLogPage({
   }>
 }) {
   const supabase = await createServerSupabaseClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  const { data: staffUser } = await supabase
+    .from('admin_users')
+    .select('role')
+    .eq('email', user?.email ?? '')
+    .eq('is_active', true)
+    .maybeSingle()
+
+  if (staffUser?.role !== 'super_admin') {
+    redirect('/dashboard')
+  }
+
   const resolvedSearchParams = await searchParams
   const page = Math.max(1, parseInt(resolvedSearchParams.page ?? '1', 10))
   const offset = (page - 1) * PER_PAGE

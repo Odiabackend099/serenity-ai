@@ -1,7 +1,9 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { confirmAppointmentWithDeps, type ConfirmAppointmentResult } from '@/lib/appointment-actions-flow'
 
 type AppointmentStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
 
@@ -26,65 +28,69 @@ async function callNotificationFunction(payload: Record<string, unknown>): Promi
   })
 }
 
+function appointmentNoticeUrl(appointmentId: string, notice: string): string {
+  return `/dashboard/appointments?appointment=${encodeURIComponent(appointmentId)}&notice=${encodeURIComponent(notice)}`
+}
+
+function confirmationNotice(result: ConfirmAppointmentResult): string {
+  switch (result.status) {
+    case 'confirmed':
+      return 'confirmed'
+    case 'missing_doctor':
+      return 'missing-doctor'
+    case 'notification_failed':
+      return 'notification-issue'
+    default:
+      return 'could-not-save'
+  }
+}
+
 export async function confirmAppointment(appointmentId: string, formData?: FormData): Promise<void> {
   const doctorId = formData?.get('doctor_id')?.toString() || null
   const supabase = await createServerSupabaseClient()
-
-  if (doctorId) {
-    const { error } = await supabase
-      .from('appointments')
-      .update({ doctor_id: doctorId })
-      .eq('id', appointmentId)
-
-    if (error) {
-      console.error('[appointments] doctor assignment failed:', error.message)
+  const result = await confirmAppointmentWithDeps(appointmentId, doctorId, {
+    assignDoctor: async (id, selectedDoctorId) => {
+      const { error } = await supabase
+        .from('appointments')
+        .update({ doctor_id: selectedDoctorId })
+        .eq('id', id)
+      if (error) throw new Error(error.message)
+    },
+    getAppointmentDoctorId: async (id) => {
+      const { data: appointment, error } = await supabase
+        .from('appointments')
+        .select('doctor_id')
+        .eq('id', id)
+        .single()
+      if (error || !appointment) throw new Error(error?.message ?? 'not found')
+      return appointment.doctor_id
+    },
+    markNeedsDoctorAssignment: async (id) => {
+      const { error } = await supabase
+        .from('appointments')
+        .update({
+          status: 'pending',
+          calendar_sync_status: 'pending_no_matched_doctor',
+          calendar_sync_error: null,
+        })
+        .eq('id', id)
+      if (error) throw new Error(error.message)
+    },
+    callNotificationFunction: async (payload) => {
+      const res = await callNotificationFunction(payload)
+      if (!res) return null
+      return {
+        ok: res.ok,
+        errorText: res.ok ? undefined : await res.text().catch(() => res.statusText),
+      }
+    },
+    logError: (message, error) => console.error(message, error),
+    revalidate: () => {
       revalidatePath('/dashboard/appointments')
-      return
-    }
-  }
-
-  const { data: appointment, error: appointmentError } = await supabase
-    .from('appointments')
-    .select('doctor_id')
-    .eq('id', appointmentId)
-    .single()
-
-  if (appointmentError || !appointment) {
-    console.error('[appointments] appointment lookup failed:', appointmentError?.message ?? 'not found')
-    revalidatePath('/dashboard/appointments')
-    return
-  }
-
-  if (!appointment.doctor_id) {
-    const { error } = await supabase
-      .from('appointments')
-      .update({
-        status: 'pending',
-        calendar_sync_status: 'pending_no_matched_doctor',
-        calendar_sync_error: null,
-      })
-      .eq('id', appointmentId)
-
-    if (error) {
-      console.error('[appointments] missing doctor guard update failed:', error.message)
-    }
-
-    revalidatePath('/dashboard/appointments')
-    revalidatePath('/dashboard')
-    return
-  }
-
-  const res = await callNotificationFunction({
-    type: 'appointment_dashboard_confirmation',
-    appointmentId,
+      revalidatePath('/dashboard')
+    },
   })
-
-  if (!res?.ok) {
-    console.error('[appointments] dashboard confirmation failed:', res ? await res.text().catch(() => res.statusText) : 'service not configured')
-  }
-
-  revalidatePath('/dashboard/appointments')
-  revalidatePath('/dashboard')
+  redirect(appointmentNoticeUrl(appointmentId, confirmationNotice(result)))
 }
 
 export async function updateAppointmentStatus(
@@ -115,6 +121,7 @@ export async function updateAppointmentStatus(
 
       revalidatePath('/dashboard/appointments')
       revalidatePath('/dashboard')
+      redirect(appointmentNoticeUrl(appointmentId, 'missing-doctor'))
       return
     }
   }
@@ -126,11 +133,14 @@ export async function updateAppointmentStatus(
 
   if (error) {
     console.error('[appointments] update status failed:', error.message)
+    redirect(appointmentNoticeUrl(appointmentId, 'could-not-save'))
     return
   }
 
   revalidatePath('/dashboard/appointments')
   revalidatePath('/dashboard')
+  const notice = status === 'completed' ? 'completed' : status === 'no_show' ? 'did-not-attend' : status === 'confirmed' ? 'confirmed' : 'updated'
+  redirect(appointmentNoticeUrl(appointmentId, notice))
 }
 
 export async function cancelAppointment(appointmentId: string): Promise<void> {
@@ -150,6 +160,7 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
 
   if (error) {
     console.error('[appointments] cancel failed:', error.message)
+    redirect(appointmentNoticeUrl(appointmentId, 'could-not-save'))
     return
   }
 
@@ -170,6 +181,7 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
 
   revalidatePath('/dashboard/appointments')
   revalidatePath('/dashboard')
+  redirect(appointmentNoticeUrl(appointmentId, 'cancelled'))
 }
 
 export async function sendManualReminder(
@@ -190,10 +202,14 @@ export async function sendManualReminder(
   const doctor = appt.doctors as { name?: string } | null
   const phone = patient?.phone_number?.replace('+', '')
 
-  if (!phone) return
+  if (!phone) {
+    redirect(appointmentNoticeUrl(appointmentId, 'missing-phone'))
+  }
 
   const config = getInternalFunctionConfig()
-  if (!config) return
+  if (!config) {
+    redirect(appointmentNoticeUrl(appointmentId, 'notification-issue'))
+  }
 
   const res = await fetch(`${config.supabaseUrl}/functions/v1/appointment-reminder`, {
     method: 'POST',
@@ -216,6 +232,7 @@ export async function sendManualReminder(
 
   if (!res.ok) {
     console.error('[appointments] manual reminder failed:', await res.text().catch(() => res.statusText))
+    redirect(appointmentNoticeUrl(appointmentId, 'notification-issue'))
     return
   }
 
@@ -224,4 +241,6 @@ export async function sendManualReminder(
   await supabase.from('appointments').update({ [updateField]: true }).eq('id', appointmentId)
 
   revalidatePath('/dashboard/appointments')
+  revalidatePath('/dashboard')
+  redirect(appointmentNoticeUrl(appointmentId, 'reminder-sent'))
 }

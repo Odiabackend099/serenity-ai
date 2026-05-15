@@ -1,8 +1,21 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { format, subDays, startOfDay } from 'date-fns'
+import { redirect } from 'next/navigation'
 
 export default async function AnalyticsPage() {
   const supabase = await createServerSupabaseClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  const { data: staffUser } = await supabase
+    .from('admin_users')
+    .select('role')
+    .eq('email', user?.email ?? '')
+    .eq('is_active', true)
+    .maybeSingle()
+
+  if (staffUser?.role !== 'super_admin') {
+    redirect('/dashboard')
+  }
+
   const now = new Date()
   const thirtyDaysAgo = subDays(now, 30).toISOString()
   const sevenDaysAgo = subDays(now, 7).toISOString()
@@ -83,7 +96,7 @@ export default async function AnalyticsPage() {
     <div className="p-6 max-w-7xl mx-auto">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Reports</h1>
-        <p className="text-gray-500 text-sm">Hospital activity, appointment trends, and AI support performance.</p>
+        <p className="text-gray-500 text-sm">Hospital activity, appointment trends, and assistant support performance.</p>
       </div>
 
       {/* Top KPIs */}

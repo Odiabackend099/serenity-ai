@@ -257,7 +257,7 @@ export default async function PatientDetailPage({
             </button>
           </form>
           <p className="text-xs text-gray-400 mt-1.5">
-            Note: Patient replies open the WhatsApp customer service window for Twilio free-form responses.
+            Note: Patient replies keep the WhatsApp conversation open for staff follow-up.
           </p>
         </details>
 
@@ -490,7 +490,7 @@ function appointmentStatusLabel(status: string | null): string {
     case 'cancelled':
       return 'Cancelled'
     case 'no_show':
-      return 'No-show'
+      return 'Did not attend'
     default:
       return 'Saved'
   }

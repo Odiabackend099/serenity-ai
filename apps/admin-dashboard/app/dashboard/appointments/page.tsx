@@ -8,10 +8,20 @@ import {
   sendManualReminder,
   updateAppointmentStatus,
 } from './actions'
+import {
+  calendarStatus,
+  formatAppointmentReason,
+  formatCalendarDetail,
+  formatNotificationDetail,
+  humanizeNotificationStatus,
+  normalizeNotificationStatus,
+} from '@/lib/appointment-display'
+import type { NotificationStatus } from '@/lib/appointment-display'
 
 type View = 'upcoming' | 'pending' | 'confirmed' | 'whatsapp' | 'calendar' | 'past' | 'all'
 type AppointmentStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
-type NotificationStatus = 'pending' | 'synced' | 'sent' | 'delivered' | 'read' | 'failed' | 'skipped' | 'none'
+type Tone = 'green' | 'amber' | 'red' | 'gray'
+
 type NotificationRow = {
   notification_type: string | null
   channel: string | null
@@ -22,6 +32,7 @@ type NotificationRow = {
   recipient_phone: string | null
   created_at: string
 }
+
 type AppointmentWithRelations = {
   id: string
   doctor_id: string | null
@@ -49,21 +60,23 @@ type DoctorOption = {
 }
 
 const VALID_VIEWS: View[] = ['upcoming', 'pending', 'confirmed', 'whatsapp', 'calendar', 'past', 'all']
+const APPOINTMENT_SELECT = '*, patients(id, name, phone_number, email), doctors(name, speciality), notifications(notification_type, channel, status, error_message, recipient_role, recipient_name, recipient_phone, created_at)'
 
 export default async function AppointmentsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ view?: string; appointment?: string }>
+  searchParams: Promise<{ view?: string; appointment?: string; notice?: string }>
 }) {
   const resolvedSearchParams = await searchParams
   const view = VALID_VIEWS.includes(resolvedSearchParams.view as View) ? (resolvedSearchParams.view as View) : 'upcoming'
   const highlightedAppointment = resolvedSearchParams.appointment
+  const notice = resolvedSearchParams.notice
   const supabase = await createServerSupabaseClient()
   const today = new Date().toISOString().split('T')[0]
 
   let query = supabase
     .from('appointments')
-    .select('*, patients(id, name, phone_number, email), doctors(name, speciality), notifications(notification_type, channel, status, error_message, recipient_role, recipient_name, recipient_phone, created_at)')
+    .select(APPOINTMENT_SELECT)
     .order('appointment_date', { ascending: view !== 'past' })
     .order('appointment_time', { ascending: view !== 'past' })
     .limit(200)
@@ -107,7 +120,25 @@ export default async function AppointmentsPage({
   const visibleAppointments = ((appointments ?? []) as AppointmentWithRelations[])
     .filter((appointment) => !isInternalDemoAppointment(appointment))
 
-  const grouped = visibleAppointments.reduce((acc, appt) => {
+  let pinnedAppointment = highlightedAppointment
+    ? visibleAppointments.find((appointment) => appointment.id === highlightedAppointment) ?? null
+    : null
+
+  if (highlightedAppointment && !pinnedAppointment) {
+    const { data: exactAppointment } = await supabase
+      .from('appointments')
+      .select(APPOINTMENT_SELECT)
+      .eq('id', highlightedAppointment)
+      .maybeSingle()
+
+    const exact = exactAppointment as AppointmentWithRelations | null
+    if (exact && !isInternalDemoAppointment(exact)) {
+      pinnedAppointment = exact
+    }
+  }
+
+  const groupedAppointments = visibleAppointments.filter((appointment) => appointment.id !== pinnedAppointment?.id)
+  const grouped = groupedAppointments.reduce((acc, appt) => {
     const date = appt.appointment_date
     if (!acc[date]) acc[date] = []
     acc[date].push(appt)
@@ -117,26 +148,46 @@ export default async function AppointmentsPage({
 
   const tabs: { key: View; label: string; count: number | null }[] = [
     { key: 'upcoming', label: 'Upcoming', count: upcomingCount },
-    { key: 'pending', label: 'Pending', count: pendingCount },
+    { key: 'pending', label: 'Waiting', count: pendingCount },
     { key: 'confirmed', label: 'Confirmed', count: confirmedCount },
-    { key: 'whatsapp', label: 'WhatsApp AI', count: whatsappCount },
-    { key: 'calendar', label: 'Needs calendar review', count: calendarCount },
+    { key: 'whatsapp', label: 'WhatsApp bookings', count: whatsappCount },
+    { key: 'calendar', label: 'Schedule check', count: calendarCount },
     { key: 'past', label: 'Past', count: pastCount },
     { key: 'all', label: 'All', count: allCount },
   ]
 
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto">
-      <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+      <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-serenity-600">Appointment operations</p>
-          <h1 className="text-2xl font-bold text-gray-950 mt-1">Appointments</h1>
-          <p className="text-gray-500 text-sm mt-1">Confirm WhatsApp bookings, check calendar status, and send patient updates.</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-serenity-600">Booking desk</p>
+          <h1 className="text-2xl font-bold text-gray-950 mt-1">Bookings</h1>
+          <p className="text-gray-500 text-sm mt-1">Review WhatsApp requests, choose a doctor, and confirm the patient visit.</p>
         </div>
         <a href="/api/export/appointments" className="w-fit rounded-md border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">
-          Export CSV
+          Download list
         </a>
       </div>
+
+      <NoticeBanner notice={notice} />
+
+      {pinnedAppointment && (
+        <section className="mb-6">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <h2 className="text-sm font-semibold text-gray-950">Booking request from WhatsApp</h2>
+            <Badge tone="green">Opened from staff link</Badge>
+          </div>
+          <div className="overflow-hidden rounded-lg border border-serenity-200 bg-white shadow-sm">
+            <AppointmentCard
+              appointment={pinnedAppointment}
+              doctors={activeDoctors}
+              today={today}
+              highlighted
+              withBorder={false}
+            />
+          </div>
+        </section>
+      )}
 
       <div className="mb-6 overflow-x-auto">
         <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-max min-w-full sm:min-w-0">
@@ -170,7 +221,7 @@ export default async function AppointmentsPage({
                   {format(new Date(`${date}T00:00:00`), 'EEEE, MMMM d, yyyy')}
                 </h2>
                 <span className="rounded bg-serenity-50 px-2 py-0.5 text-xs font-semibold text-serenity-700">
-                  {appts.length} appointment{appts.length !== 1 ? 's' : ''}
+                  {appts.length} booking{appts.length !== 1 ? 's' : ''}
                 </span>
               </div>
               <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
@@ -191,9 +242,9 @@ export default async function AppointmentsPage({
       ) : (
         <div className="bg-white border border-gray-200 rounded-lg text-center py-16">
           <p className="font-semibold text-gray-700">
-            {view === 'upcoming' ? 'No upcoming appointments' : view === 'past' ? 'No past appointments' : 'No appointments match this view'}
+            {view === 'upcoming' ? 'No upcoming bookings' : view === 'past' ? 'No past bookings' : 'No bookings match this view'}
           </p>
-          <p className="text-gray-400 text-sm mt-1">Appointments booked via WhatsApp AI will appear here.</p>
+          <p className="text-gray-400 text-sm mt-1">WhatsApp booking requests will appear here.</p>
         </div>
       )}
     </div>
@@ -217,23 +268,31 @@ function AppointmentCard({
   const doctor = appointment.doctors
   const isUpcoming = appointment.appointment_date >= today
   const needsDoctorAssignment = appointment.status === 'confirmed' && !appointment.doctor_id
+  const needsConfirmation = appointment.status === 'pending' || needsDoctorAssignment
   const canRemind = isUpcoming && appointment.status === 'confirmed' && !needsDoctorAssignment
   const patientWhatsapp = latestNotification(appointment, 'appointment_confirmation', 'whatsapp')
   const operationsWhatsapp = latestNotification(appointment, 'staff_booking_alert', 'whatsapp', 'operations_manager')
   const primaryDoctorWhatsapp = latestNotification(appointment, 'staff_booking_alert', 'whatsapp', 'primary_doctor')
   const assignedDoctorWhatsapp = latestNotification(appointment, 'staff_booking_alert', 'whatsapp', 'assigned_doctor')
   const email = latestNotification(appointment, null, 'email')
-  const emailStatus: NotificationStatus = email ? normalizeNotificationStatus(email.status) : patient?.email ? 'none' : 'skipped'
+  const proofItems = notificationProofItems(appointment, {
+    patientWhatsapp,
+    operationsWhatsapp,
+    primaryDoctorWhatsapp,
+    assignedDoctorWhatsapp,
+    email,
+  })
+  const updateSummary = getUpdateSummary(appointment, proofItems)
+  const status = appointmentStatus(appointment, needsDoctorAssignment)
 
   return (
     <div className={`${withBorder ? 'border-t border-gray-100' : ''} ${highlighted ? 'bg-serenity-50/60 ring-1 ring-inset ring-serenity-200' : ''} p-4`}>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_18rem] xl:items-start">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-lg font-bold tabular-nums text-serenity-800">{appointment.appointment_time?.slice(0, 5) ?? '--:--'}</p>
             <StatusBadge status={needsDoctorAssignment ? 'pending' : appointment.status} />
-            {(appointment.status === 'pending' || needsDoctorAssignment) && <Badge tone="amber">{needsDoctorAssignment ? 'Needs doctor assignment' : 'Awaiting secretary review'}</Badge>}
-            {appointment.created_from_whatsapp && <Badge tone="green">WhatsApp AI</Badge>}
+            {appointment.created_from_whatsapp && <Badge tone="green">WhatsApp booking</Badge>}
           </div>
 
           <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -251,99 +310,96 @@ function AppointmentCard({
             )}
           </div>
 
-          <p className="mt-1 text-sm text-gray-600 break-words">
-            {appointment.service_type ?? 'Consultation'} · {appointment.center ?? 'Center TBD'} · {doctor?.name ?? 'Doctor not assigned yet'}
-          </p>
-          {appointment.reason && (
-            <p className="mt-1 max-w-3xl text-xs text-gray-400 break-words">{formatAppointmentReason(appointment.reason)}</p>
-          )}
-
-          <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-6">
-            <ProofBadge
-              label="Calendar"
-              status={calendarStatus(appointment.calendar_sync_status)}
-              detail={formatCalendarDetail(appointment.calendar_sync_status, appointment.calendar_sync_error)}
-            />
-            <ProofBadge
-              label="Patient"
-              status={normalizeNotificationStatus(patientWhatsapp?.status)}
-              detail={formatNotificationDetail(patientWhatsapp, 'Patient confirmation has not been sent yet')}
-            />
-            <ProofBadge
-              label="Secretary"
-              status={normalizeNotificationStatus(operationsWhatsapp?.status)}
-              detail={formatNotificationDetail(operationsWhatsapp, 'Secretary alert has not been sent yet')}
-            />
-            <ProofBadge
-              label="Dr K"
-              status={normalizeNotificationStatus(primaryDoctorWhatsapp?.status)}
-              detail={formatNotificationDetail(primaryDoctorWhatsapp, 'Dr K alert has not been sent yet')}
-            />
-            <ProofBadge
-              label="Doctor"
-              status={assignedDoctorWhatsapp ? normalizeNotificationStatus(assignedDoctorWhatsapp.status) : appointment.doctors?.name ? 'none' : 'skipped'}
-              detail={formatNotificationDetail(assignedDoctorWhatsapp, appointment.doctors?.name ? 'Doctor alert has not been sent yet' : 'Doctor not assigned yet')}
-            />
-            <ProofBadge
-              label="Email"
-              status={emailStatus}
-              detail={formatNotificationDetail(email, patient?.email ? 'Email has not been sent yet' : 'Patient email not provided')}
-            />
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            <InfoTile label="Requested time" value={`${format(new Date(`${appointment.appointment_date}T00:00:00`), 'MMM d, yyyy')} at ${appointment.appointment_time?.slice(0, 5) ?? '--:--'}`} />
+            <InfoTile label="Branch" value={appointment.center ?? 'Branch not set'} />
+            <InfoTile label="Service" value={appointment.service_type ?? 'Consultation'} />
+            <InfoTile label="Doctor" value={doctor?.name ?? 'Doctor not assigned yet'} />
           </div>
+
+          <div className={`mt-3 rounded-md border px-3 py-2 ${toneClasses(status.tone).soft}`}>
+            <p className="text-sm font-semibold">{status.label}</p>
+            <p className="mt-0.5 text-xs opacity-80">{status.detail}</p>
+          </div>
+
+          <div className={`mt-2 rounded-md border px-3 py-2 ${toneClasses(updateSummary.tone).soft}`}>
+            <p className="text-sm font-semibold">{updateSummary.label}</p>
+            <p className="mt-0.5 text-xs opacity-80">{updateSummary.detail}</p>
+          </div>
+
+          <details className="mt-3 rounded-md border border-gray-100 bg-white px-3 py-2">
+            <summary className="cursor-pointer text-xs font-semibold text-serenity-700">More details</summary>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {proofItems.map((item) => (
+                <ProofRow key={item.label} {...item} />
+              ))}
+            </div>
+            {appointment.reason && (
+              <p className="mt-3 text-xs text-gray-500 break-words">{formatAppointmentReason(appointment.reason)}</p>
+            )}
+          </details>
         </div>
 
-        <div className="flex flex-wrap gap-2 xl:max-w-xs xl:justify-end">
-          {(appointment.status === 'pending' || needsDoctorAssignment) && (
-            <form action={confirmAppointment.bind(null, appointment.id)}>
-              <div className="mb-2 min-w-56">
-                <label htmlFor={`doctor-${appointment.id}`} className="sr-only">Assign doctor</label>
-                <select
-                  id={`doctor-${appointment.id}`}
-                  name="doctor_id"
-                  defaultValue={appointment.doctor_id ?? ''}
-                  className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs font-medium text-gray-700 shadow-sm focus:border-serenity-500 focus:outline-none focus:ring-2 focus:ring-serenity-100"
-                >
-                  <option value="">Choose doctor...</option>
-                  {doctors.map((doctorOption) => (
-                    <option key={doctorOption.id} value={doctorOption.id}>
-                      {doctorOption.name}{doctorOption.location ? ` · ${doctorOption.location}` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <ActionButton tone="primary">Confirm appointment</ActionButton>
-            </form>
-          )}
-
-          {canRemind && !appointment.reminder_1week_sent && (
-            <form action={sendManualReminder.bind(null, appointment.id, '1week')}>
-              <ActionButton tone="secondary">Send 1-week reminder</ActionButton>
-            </form>
-          )}
-
-          {canRemind && !appointment.reminder_24h_sent && (
-            <form action={sendManualReminder.bind(null, appointment.id, '24h')}>
-              <ActionButton tone="secondary">Send 24-hour reminder</ActionButton>
+        <div className="flex flex-col gap-2">
+          {needsConfirmation && (
+            <form action={confirmAppointment.bind(null, appointment.id)} className="rounded-md border border-amber-100 bg-amber-50 p-3">
+              <label htmlFor={`doctor-${appointment.id}`} className="mb-1 block text-xs font-semibold text-amber-900">
+                Choose doctor
+              </label>
+              <select
+                id={`doctor-${appointment.id}`}
+                name="doctor_id"
+                defaultValue={appointment.doctor_id ?? ''}
+                required
+                disabled={doctors.length === 0}
+                className="w-full rounded-md border border-amber-200 bg-white px-2 py-2 text-sm font-medium text-gray-800 shadow-sm focus:border-serenity-500 focus:outline-none focus:ring-2 focus:ring-serenity-100 disabled:cursor-not-allowed disabled:bg-gray-100"
+              >
+                <option value="">Select doctor</option>
+                {doctors.map((doctorOption) => (
+                  <option key={doctorOption.id} value={doctorOption.id}>
+                    {doctorOption.name}{doctorOption.location ? ` - ${doctorOption.location}` : ''}
+                  </option>
+                ))}
+              </select>
+              <ActionButton tone="primary" disabled={doctors.length === 0}>Confirm booking</ActionButton>
+              {doctors.length === 0 && (
+                <p className="mt-2 text-xs text-amber-800">No active doctors are available in setup.</p>
+              )}
             </form>
           )}
 
           {appointment.status === 'confirmed' && !needsDoctorAssignment && (
             <>
               <form action={confirmAppointment.bind(null, appointment.id)}>
-                <ActionButton tone="secondary">Retry alerts</ActionButton>
+                <ActionButton tone="secondary">Resend updates</ActionButton>
               </form>
-              <form action={updateAppointmentStatus.bind(null, appointment.id, 'completed')}>
-                <ActionButton tone="secondary">Mark completed</ActionButton>
-              </form>
-              <form action={updateAppointmentStatus.bind(null, appointment.id, 'no_show')}>
-                <ActionButton tone="secondary">No-show</ActionButton>
-              </form>
+              <details className="rounded-md border border-gray-100 bg-white px-3 py-2">
+                <summary className="cursor-pointer text-xs font-semibold text-gray-600">Other actions</summary>
+                <div className="mt-3 flex flex-col gap-2">
+                  {canRemind && !appointment.reminder_1week_sent && (
+                    <form action={sendManualReminder.bind(null, appointment.id, '1week')}>
+                      <ActionButton tone="secondary">Send 1-week reminder</ActionButton>
+                    </form>
+                  )}
+                  {canRemind && !appointment.reminder_24h_sent && (
+                    <form action={sendManualReminder.bind(null, appointment.id, '24h')}>
+                      <ActionButton tone="secondary">Send 24-hour reminder</ActionButton>
+                    </form>
+                  )}
+                  <form action={updateAppointmentStatus.bind(null, appointment.id, 'completed')}>
+                    <ActionButton tone="secondary">Mark completed</ActionButton>
+                  </form>
+                  <form action={updateAppointmentStatus.bind(null, appointment.id, 'no_show')}>
+                    <ActionButton tone="secondary">Mark did not attend</ActionButton>
+                  </form>
+                </div>
+              </details>
             </>
           )}
 
           {appointment.status !== 'cancelled' && appointment.status !== 'completed' && (
             <form action={cancelAppointment.bind(null, appointment.id)}>
-              <ActionButton tone="danger">Cancel</ActionButton>
+              <ActionButton tone="danger">Cancel booking</ActionButton>
             </form>
           )}
         </div>
@@ -359,83 +415,206 @@ function latestNotification(appointment: AppointmentWithRelations, type: string 
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
 }
 
-function formatNotificationDetail(notification: NotificationRow | undefined, fallback: string): string {
-  if (!notification) return fallback
-  const recipient = [notification.recipient_name, notification.recipient_phone].filter(Boolean).join(' · ')
-  const status = humanizeProviderError(notification.error_message) ?? humanizeProviderError(notification.status) ?? humanizeNotificationStatus(notification.status)
-  return recipient ? `${recipient}: ${status}` : status
+function notificationProofItems(
+  appointment: AppointmentWithRelations,
+  notifications: {
+    patientWhatsapp?: NotificationRow
+    operationsWhatsapp?: NotificationRow
+    primaryDoctorWhatsapp?: NotificationRow
+    assignedDoctorWhatsapp?: NotificationRow
+    email?: NotificationRow
+  },
+) {
+  const patient = appointment.patients
+  const emailStatus: NotificationStatus = notifications.email ? normalizeNotificationStatus(notifications.email.status) : patient?.email ? 'none' : 'skipped'
+  return [
+    {
+      label: 'Hospital calendar',
+      status: calendarStatus(appointment.calendar_sync_status),
+      detail: formatCalendarDetail(appointment.calendar_sync_status, appointment.calendar_sync_error),
+    },
+    {
+      label: 'Patient',
+      status: normalizeNotificationStatus(notifications.patientWhatsapp?.status),
+      detail: formatNotificationDetail(notifications.patientWhatsapp, 'Patient update has not been sent yet'),
+    },
+    {
+      label: 'Secretary',
+      status: normalizeNotificationStatus(notifications.operationsWhatsapp?.status),
+      detail: formatNotificationDetail(notifications.operationsWhatsapp, 'Secretary update has not been sent yet'),
+    },
+    {
+      label: 'Dr K',
+      status: normalizeNotificationStatus(notifications.primaryDoctorWhatsapp?.status),
+      detail: formatNotificationDetail(notifications.primaryDoctorWhatsapp, 'Dr K update has not been sent yet'),
+    },
+    {
+      label: 'Doctor',
+      status: notifications.assignedDoctorWhatsapp ? normalizeNotificationStatus(notifications.assignedDoctorWhatsapp.status) : appointment.doctor_id ? 'none' as NotificationStatus : 'skipped' as NotificationStatus,
+      detail: formatNotificationDetail(notifications.assignedDoctorWhatsapp, appointment.doctor_id ? 'Doctor update has not been sent yet' : 'Doctor not assigned yet'),
+    },
+    {
+      label: 'Email',
+      status: emailStatus,
+      detail: formatNotificationDetail(notifications.email, patient?.email ? 'Email has not been sent yet' : 'Patient email not provided'),
+    },
+  ]
 }
 
-function formatCalendarDetail(status: string | null, error: string | null): string {
-  if (status === 'synced') return 'Synced with Google Calendar.'
-  if (status === 'pending_no_matched_doctor') return 'Doctor not assigned yet. Secretary should assign a doctor before confirming.'
-  if (status === 'pending_doctor_center_mismatch') return 'Doctor and branch need review before confirmation.'
-  if (status === 'pending_database_conflict') return 'Possible appointment conflict. Review the schedule before confirming.'
-  if (status === 'pending_calendar_not_configured') return 'Calendar setup needs review. Appointment is saved for manual confirmation.'
-  if (status === 'pending_calendar_busy') return 'Requested time may already be booked. Review availability before confirming.'
-  if (status === 'pending_calendar_error') return 'Google Calendar check needs review. Appointment is saved for manual confirmation.'
-  return humanizeProviderError(error) ?? status ?? 'No calendar sync recorded yet.'
-}
+function getUpdateSummary(appointment: AppointmentWithRelations, proofItems: ReturnType<typeof notificationProofItems>) {
+  const calendar = proofItems.find((item) => item.label === 'Hospital calendar')
+  const notificationItems = proofItems.filter((item) => item.label !== 'Hospital calendar' && item.status !== 'skipped')
+  const failed = proofItems.some((item) => item.status === 'failed')
+  const pending = notificationItems.some((item) => item.status === 'none' || item.status === 'pending')
+  const delivered = notificationItems.length > 0 && notificationItems.every((item) => ['sent', 'delivered', 'read'].includes(item.status))
 
-function formatAppointmentReason(reason: string): string {
-  return reason
-    .split(' | ')
-    .map((part) => {
-      const lower = part.toLowerCase()
-      if (part.toLowerCase().startsWith('calendar error:')) {
-        return 'Calendar note: Google Calendar check needs review. Appointment is saved for manual confirmation.'
-      }
-      if (lower.startsWith('calendar status:')) {
-        return `Calendar note: ${formatCalendarDetail(part.split(':').slice(1).join(':').trim(), null)}`
-      }
-      if (part === 'Booked via WhatsApp AI') return 'Booked by WhatsApp AI'
-      return humanizeProviderError(part) ?? part
-    })
-    .join(' · ')
-}
-
-function humanizeProviderError(error?: string | null): string | null {
-  if (!error) return null
-  const normalized = error.toLowerCase()
-  if (normalized.includes('63038')) {
-    return 'WhatsApp sending limit reached. Use Retry alerts after the limit resets or switch to the approved hospital sender.'
+  if (appointment.status === 'pending' || (appointment.status === 'confirmed' && !appointment.doctor_id)) {
+    return {
+      label: 'Updates pending',
+      detail: 'Patient and staff updates will be sent after the booking is confirmed.',
+      tone: 'amber' as Tone,
+    }
   }
-  if (normalized.includes('daily message limit') || normalized.includes('delivery is queued')) {
-    return 'WhatsApp is waiting to send because the current Twilio sender has reached its message limit. Use Retry alerts after the limit resets or switch to the approved hospital sender.'
+
+  if (calendar?.status === 'failed') {
+    return {
+      label: 'Schedule needs check',
+      detail: 'Review the hospital calendar before relying on this booking.',
+      tone: 'amber' as Tone,
+    }
   }
-  if (normalized.includes('twilio whatsapp send failed')) {
-    return 'WhatsApp was not sent. Confirm the recipient has joined the Twilio WhatsApp sandbox, then retry alerts.'
+
+  if (failed || pending) {
+    return {
+      label: 'Needs resend',
+      detail: 'The booking is saved, but one or more updates have not gone through.',
+      tone: failed ? 'red' as Tone : 'amber' as Tone,
+    }
   }
-  if (normalized.includes('google calendar') || normalized.includes('freebusy')) {
-    return 'Google Calendar availability check failed. Appointment is saved and needs manual review.'
+
+  if (delivered) {
+    return {
+      label: 'Updates sent',
+      detail: 'Patient and staff updates have been sent.',
+      tone: 'green' as Tone,
+    }
   }
-  if (error.includes('{') || error.includes('}') || normalized.includes('"error"')) {
-    return 'Technical provider error. Admin should review logs.'
+
+  return {
+    label: 'Needs resend',
+    detail: 'Use Resend updates if anyone did not receive the booking message.',
+    tone: 'amber' as Tone,
   }
-  return error.length > 140 ? `${error.slice(0, 137)}...` : error
 }
 
-function humanizeNotificationStatus(status?: string | null): string {
-  if (status === 'synced') return 'Synced'
-  if (status === 'sent') return 'Sent'
-  if (status === 'delivered') return 'Delivered'
-  if (status === 'read') return 'Read'
-  if (status === 'failed') return 'Failed'
-  if (status === 'pending') return 'Waiting to send'
-  if (status === 'skipped') return 'Skipped'
-  return status ?? 'No status'
+function appointmentStatus(appointment: AppointmentWithRelations, needsDoctorAssignment: boolean) {
+  if (appointment.status === 'pending') {
+    return {
+      label: 'Waiting for confirmation',
+      detail: 'Choose a doctor, then confirm this booking.',
+      tone: 'amber' as Tone,
+    }
+  }
+  if (needsDoctorAssignment) {
+    return {
+      label: 'Choose a doctor before confirming',
+      detail: 'This request came in as any available doctor.',
+      tone: 'amber' as Tone,
+    }
+  }
+  if (appointment.status === 'confirmed') {
+    return {
+      label: 'Confirmed',
+      detail: 'This booking is confirmed for the patient.',
+      tone: 'green' as Tone,
+    }
+  }
+  if (appointment.status === 'completed') {
+    return {
+      label: 'Completed',
+      detail: 'The visit has been marked as completed.',
+      tone: 'gray' as Tone,
+    }
+  }
+  if (appointment.status === 'no_show') {
+    return {
+      label: 'Patient did not attend',
+      detail: 'This booking was marked as not attended.',
+      tone: 'gray' as Tone,
+    }
+  }
+  if (appointment.status === 'cancelled') {
+    return {
+      label: 'Cancelled',
+      detail: 'This booking has been cancelled.',
+      tone: 'red' as Tone,
+    }
+  }
+  return {
+    label: 'Saved',
+    detail: 'This booking is saved in the dashboard.',
+    tone: 'gray' as Tone,
+  }
 }
 
-function normalizeNotificationStatus(status?: string | null): NotificationStatus {
-  if (status === 'sent' || status === 'delivered' || status === 'read' || status === 'failed' || status === 'pending') return status
-  return 'none'
-}
+function NoticeBanner({ notice }: { notice?: string }) {
+  if (!notice) return null
+  const messages: Record<string, { title: string; detail: string; tone: Tone }> = {
+    confirmed: {
+      title: 'Booking confirmed',
+      detail: 'Patient and staff updates were sent.',
+      tone: 'green',
+    },
+    'notification-issue': {
+      title: 'Booking saved, but updates need resend',
+      detail: 'Use Resend updates if the patient or staff did not receive the message.',
+      tone: 'amber',
+    },
+    'missing-doctor': {
+      title: 'Choose a doctor first',
+      detail: 'A booking cannot be confirmed until a doctor is selected.',
+      tone: 'amber',
+    },
+    cancelled: {
+      title: 'Booking cancelled',
+      detail: 'The booking is no longer active.',
+      tone: 'red',
+    },
+    completed: {
+      title: 'Marked completed',
+      detail: 'The visit is now saved as completed.',
+      tone: 'green',
+    },
+    'did-not-attend': {
+      title: 'Marked did not attend',
+      detail: 'The booking is now saved as patient did not attend.',
+      tone: 'gray',
+    },
+    'reminder-sent': {
+      title: 'Reminder sent',
+      detail: 'The patient reminder was sent.',
+      tone: 'green',
+    },
+    'missing-phone': {
+      title: 'Patient phone number missing',
+      detail: 'Add a patient phone number before sending updates.',
+      tone: 'amber',
+    },
+    'could-not-save': {
+      title: 'Could not save that change',
+      detail: 'Please try again. If it repeats, ask a manager to review.',
+      tone: 'red',
+    },
+  }
+  const message = messages[notice]
+  if (!message) return null
 
-function calendarStatus(status: string | null): NotificationStatus {
-  if (status === 'synced') return 'synced'
-  if (!status) return 'pending'
-  if (status.includes('error') || status.includes('conflict') || status.includes('busy')) return 'failed'
-  return 'pending'
+  return (
+    <div className={`mb-5 rounded-md border px-4 py-3 ${toneClasses(message.tone).soft}`}>
+      <p className="text-sm font-semibold">{message.title}</p>
+      <p className="mt-0.5 text-xs opacity-80">{message.detail}</p>
+    </div>
+  )
 }
 
 function StatusBadge({ status }: { status: string | null }) {
@@ -443,14 +622,23 @@ function StatusBadge({ status }: { status: string | null }) {
   const label = status === 'pending'
     ? 'Needs confirmation'
     : status === 'no_show'
-      ? 'No-show'
+      ? 'Did not attend'
       : status
         ? status.charAt(0).toUpperCase() + status.slice(1)
         : 'Needs confirmation'
   return <Badge tone={tone}>{label}</Badge>
 }
 
-function ProofBadge({ label, status, detail }: { label: string; status: NotificationStatus; detail: string }) {
+function InfoTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{label}</p>
+      <p className="mt-0.5 text-sm font-semibold text-gray-800 break-words">{value}</p>
+    </div>
+  )
+}
+
+function ProofRow({ label, status, detail }: { label: string; status: NotificationStatus; detail: string }) {
   const tone = status === 'sent' || status === 'delivered' || status === 'read' || status === 'synced'
     ? 'green'
     : status === 'failed'
@@ -468,25 +656,25 @@ function ProofBadge({ label, status, detail }: { label: string; status: Notifica
   )
 }
 
-function Badge({ children, tone }: { children: ReactNode; tone: 'green' | 'amber' | 'red' | 'gray' }) {
+function Badge({ children, tone }: { children: ReactNode; tone: Tone }) {
   return <span className={`rounded-md px-2 py-0.5 text-[11px] font-semibold capitalize ${toneClasses(tone).soft}`}>{children}</span>
 }
 
-function ActionButton({ children, tone }: { children: ReactNode; tone: 'primary' | 'secondary' | 'danger' }) {
+function ActionButton({ children, tone, disabled = false }: { children: ReactNode; tone: 'primary' | 'secondary' | 'danger'; disabled?: boolean }) {
   const className = tone === 'primary'
-    ? 'bg-serenity-700 text-white hover:bg-serenity-800'
+    ? 'bg-serenity-700 text-white hover:bg-serenity-800 disabled:bg-serenity-300'
     : tone === 'danger'
-      ? 'border border-red-200 bg-white text-red-700 hover:bg-red-50'
-      : 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+      ? 'border border-red-200 bg-white text-red-700 hover:bg-red-50 disabled:text-red-300'
+      : 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:text-gray-300'
 
   return (
-    <button type="submit" className={`min-h-10 rounded-md px-3 py-2 text-xs font-semibold transition ${className}`}>
+    <button type="submit" disabled={disabled} className={`mt-2 min-h-10 w-full rounded-md px-3 py-2 text-xs font-semibold transition disabled:cursor-not-allowed ${className}`}>
       {children}
     </button>
   )
 }
 
-function toneClasses(tone: 'green' | 'amber' | 'red' | 'gray') {
+function toneClasses(tone: Tone) {
   switch (tone) {
     case 'green': return { soft: 'border-emerald-100 bg-emerald-50 text-emerald-700' }
     case 'amber': return { soft: 'border-amber-100 bg-amber-50 text-amber-700' }

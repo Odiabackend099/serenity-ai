@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase'
 
 type SidebarProps = {
   emergencyCount: number
+  staffRole: string | null
 }
 
 type NavItem = {
@@ -21,7 +22,7 @@ type IconName = 'home' | 'calendar' | 'alert' | 'patients' | 'messages' | 'repor
 
 const COLLAPSED_KEY = 'serenity-dashboard-sidebar-collapsed'
 
-export default function Sidebar({ emergencyCount }: SidebarProps) {
+export default function Sidebar({ emergencyCount, staffRole }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
   const [collapsed, setCollapsed] = useState(false)
@@ -29,6 +30,7 @@ export default function Sidebar({ emergencyCount }: SidebarProps) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [signingOut, setSigningOut] = useState(false)
   const effectiveCollapsed = loadedPreference ? collapsed : false
+  const canManageHospital = staffRole === 'super_admin'
 
   useEffect(() => {
     const nextCollapsed = localStorage.getItem(COLLAPSED_KEY) === 'true'
@@ -47,15 +49,15 @@ export default function Sidebar({ emergencyCount }: SidebarProps) {
   const nav = useMemo(
     () => ({
       primary: [
-        { label: 'Home', href: '/dashboard', icon: 'home' },
-        { label: 'Appointments', href: '/dashboard/appointments', icon: 'calendar' },
-        { label: 'Emergencies', href: '/dashboard/emergencies', icon: 'alert', badge: emergencyCount },
+        { label: 'Today', href: '/dashboard', icon: 'home' },
+        { label: 'Bookings', href: '/dashboard/appointments', icon: 'calendar' },
+        { label: 'Urgent Messages', href: '/dashboard/emergencies', icon: 'alert', badge: emergencyCount },
         { label: 'Patients', href: '/dashboard/patients', icon: 'patients' },
-        { label: 'Messages', href: '/dashboard/conversations', icon: 'messages' },
+        { label: 'Patient Chats', href: '/dashboard/conversations', icon: 'messages' },
       ] satisfies NavItem[],
       admin: [
         { label: 'Reports', href: '/dashboard/analytics', icon: 'reports' },
-        { label: 'Admin', href: '/dashboard/settings', icon: 'admin' },
+        { label: 'Hospital Setup', href: '/dashboard/settings', icon: 'admin' },
         { label: 'Activity history', href: '/dashboard/audit', icon: 'log' },
       ] satisfies NavItem[],
     }),
@@ -77,7 +79,7 @@ export default function Sidebar({ emergencyCount }: SidebarProps) {
           <Image src="/brand/serenity-royale-logo.png" alt="Serenity Royale Hospital" width={32} height={32} className="rounded-md border border-gold-400/30 bg-serenity-900" priority />
           <div className="min-w-0">
             <p className="truncate text-sm font-bold">Serenity Royale</p>
-            <p className="truncate text-xs text-gold-300">AI Dashboard</p>
+            <p className="truncate text-xs text-gold-300">Staff Dashboard</p>
           </div>
         </div>
         <button
@@ -111,7 +113,7 @@ export default function Sidebar({ emergencyCount }: SidebarProps) {
             <Image src="/brand/serenity-royale-logo.png" alt="Serenity Royale Hospital" width={44} height={44} className="rounded-md border border-gold-400/40 bg-serenity-900" priority />
             <div className={`min-w-0 ${effectiveCollapsed ? 'md:hidden' : ''}`}>
               <p className="truncate text-base font-bold text-white">Serenity Royale</p>
-              <p className="truncate text-sm font-semibold text-gold-300">Admin Dashboard</p>
+              <p className="truncate text-sm font-semibold text-gold-300">Staff Dashboard</p>
             </div>
           </Link>
           <button
@@ -131,6 +133,7 @@ export default function Sidebar({ emergencyCount }: SidebarProps) {
             ))}
           </div>
 
+          {canManageHospital && (
           <div className="mt-7 border-t border-white/10 pt-5">
             <p className={`mb-2 px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-serenity-400 ${effectiveCollapsed ? 'md:hidden' : ''}`}>Management</p>
             <div className="space-y-1">
@@ -139,6 +142,7 @@ export default function Sidebar({ emergencyCount }: SidebarProps) {
               ))}
             </div>
           </div>
+          )}
         </nav>
 
         <div className="border-t border-white/10 p-3">
