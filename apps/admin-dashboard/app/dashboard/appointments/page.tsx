@@ -6,6 +6,7 @@ import {
   cancelAppointment,
   confirmAppointment,
   sendManualReminder,
+  updatePendingAppointmentSchedule,
   updateAppointmentStatus,
 } from './actions'
 import {
@@ -270,6 +271,7 @@ function AppointmentCard({
   const isUpcoming = appointment.appointment_date >= today
   const needsDoctorAssignment = appointment.status === 'confirmed' && !appointment.doctor_id
   const needsConfirmation = appointment.status === 'pending' || needsDoctorAssignment
+  const canEditPendingSchedule = appointment.status === 'pending'
   const canRemind = isUpcoming && appointment.status === 'confirmed' && !needsDoctorAssignment
   const patientWhatsapp = latestNotification(appointment, 'appointment_confirmation', 'whatsapp')
   const operationsWhatsapp = latestNotification(appointment, 'staff_booking_alert', 'whatsapp', 'operations_manager')
@@ -369,6 +371,35 @@ function AppointmentCard({
             </form>
           )}
 
+          {canEditPendingSchedule && (
+            <form action={updatePendingAppointmentSchedule.bind(null, appointment.id)} className="rounded-md border border-gray-100 bg-white p-3">
+              <p className="mb-2 text-xs font-semibold text-gray-700">Change requested time</p>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1">
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-semibold uppercase text-gray-400">Date</span>
+                  <input
+                    type="date"
+                    name="appointment_date"
+                    defaultValue={appointment.appointment_date}
+                    required
+                    className="w-full rounded-md border border-gray-200 px-2 py-2 text-sm font-medium text-gray-800 shadow-sm focus:border-serenity-500 focus:outline-none focus:ring-2 focus:ring-serenity-100"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-semibold uppercase text-gray-400">Time</span>
+                  <input
+                    type="time"
+                    name="appointment_time"
+                    defaultValue={appointment.appointment_time?.slice(0, 5) ?? ''}
+                    required
+                    className="w-full rounded-md border border-gray-200 px-2 py-2 text-sm font-medium text-gray-800 shadow-sm focus:border-serenity-500 focus:outline-none focus:ring-2 focus:ring-serenity-100"
+                  />
+                </label>
+              </div>
+              <ActionButton tone="secondary">Save requested time</ActionButton>
+            </form>
+          )}
+
           {appointment.status === 'confirmed' && !needsDoctorAssignment && (
             <>
               <form action={confirmAppointment.bind(null, appointment.id)}>
@@ -434,12 +465,30 @@ function notificationProofItems(
 ) {
   const patient = appointment.patients
   const emailStatus: NotificationStatus = notifications.email ? normalizeNotificationStatus(notifications.email.status) : patient?.email ? 'none' : 'skipped'
+  const calendarItem = {
+    label: 'Hospital calendar',
+    status: calendarStatus(appointment.calendar_sync_status),
+    detail: formatCalendarDetail(appointment.calendar_sync_status, appointment.calendar_sync_error),
+  }
+
+  if (appointment.status === 'pending' || (appointment.status === 'confirmed' && !appointment.doctor_id)) {
+    return [
+      calendarItem,
+      {
+        label: 'Secretary',
+        status: normalizeNotificationStatus(notifications.operationsWhatsapp?.status),
+        detail: formatNotificationDetail(notifications.operationsWhatsapp, 'Booking request has not reached the secretary yet'),
+      },
+      {
+        label: 'Dr K',
+        status: normalizeNotificationStatus(notifications.primaryDoctorWhatsapp?.status),
+        detail: formatNotificationDetail(notifications.primaryDoctorWhatsapp, 'Booking request has not reached Dr K yet'),
+      },
+    ]
+  }
+
   return [
-    {
-      label: 'Hospital calendar',
-      status: calendarStatus(appointment.calendar_sync_status),
-      detail: formatCalendarDetail(appointment.calendar_sync_status, appointment.calendar_sync_error),
-    },
+    calendarItem,
     {
       label: 'Patient',
       status: normalizeNotificationStatus(notifications.patientWhatsapp?.status),
@@ -590,6 +639,16 @@ function NoticeBanner({ notice }: { notice?: string }) {
       title: 'Choose a doctor first',
       detail: 'A booking cannot be confirmed until a doctor is selected.',
       tone: 'amber',
+    },
+    'schedule-needs-check': {
+      title: 'Schedule needs check',
+      detail: 'The booking was not confirmed because the selected time or calendar needs review. Change the requested time or choose another doctor, then confirm again.',
+      tone: 'amber',
+    },
+    'schedule-updated': {
+      title: 'Requested time updated',
+      detail: 'Review the doctor and confirm the booking when the schedule is correct.',
+      tone: 'green',
     },
     cancelled: {
       title: 'Booking cancelled',

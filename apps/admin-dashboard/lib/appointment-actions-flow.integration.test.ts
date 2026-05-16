@@ -28,7 +28,7 @@ function makeDeps(initialDoctorId: string | null = null) {
       },
       callNotificationFunction: async (payload: Record<string, unknown>) => {
         notificationPayloads.push(payload)
-        return { ok: true }
+        return { ok: true, json: { confirmed: true, results: { whatsapp: true, email: true, assignedDoctorWhatsapp: true, operations_manager: true, primary_doctor: true } } }
       },
       logError: (message: string, error?: string) => {
         errors.push(`${message} ${error ?? ''}`.trim())
@@ -85,6 +85,60 @@ describe('dashboard appointment action integration flow', () => {
     expect(result).toEqual({ status: 'notification_failed' })
     expect(harness.notificationPayloads).toHaveLength(1)
     expect(harness.errors.join('\n')).toContain('dashboard confirmation failed')
+    expect(harness.revalidateCount).toBe(1)
+  })
+
+  it('does not claim confirmation when the notification function reports a schedule block', async () => {
+    const harness = makeDeps('doctor-grace')
+    const deps = {
+      ...harness.deps,
+      callNotificationFunction: async (payload: Record<string, unknown>) => {
+        harness.notificationPayloads.push(payload)
+        return {
+          ok: true,
+          json: {
+            confirmed: false,
+            calendarStatus: 'pending_calendar_busy',
+            message: 'Schedule needs review before confirmation.',
+          },
+        }
+      },
+    }
+
+    const result = await confirmAppointmentWithDeps('appt-busy', null, deps)
+
+    expect(result).toEqual({ status: 'schedule_needs_check' })
+    expect(harness.notificationPayloads).toHaveLength(1)
+    expect(harness.errors.join('\n')).toContain('dashboard confirmation blocked')
+    expect(harness.revalidateCount).toBe(1)
+  })
+
+  it('shows notification issue when a required confirmation update fails', async () => {
+    const harness = makeDeps('doctor-grace')
+    const deps = {
+      ...harness.deps,
+      callNotificationFunction: async (payload: Record<string, unknown>) => {
+        harness.notificationPayloads.push(payload)
+        return {
+          ok: true,
+          json: {
+            confirmed: true,
+            results: {
+              whatsapp: true,
+              email: true,
+              assignedDoctorWhatsapp: false,
+              operations_manager: true,
+              primary_doctor: true,
+            },
+          },
+        }
+      },
+    }
+
+    const result = await confirmAppointmentWithDeps('appt-notification-partial', null, deps)
+
+    expect(result).toEqual({ status: 'notification_failed' })
+    expect(harness.errors.join('\n')).toContain('dashboard confirmation saved with notification failures')
     expect(harness.revalidateCount).toBe(1)
   })
 })

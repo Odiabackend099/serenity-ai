@@ -35,10 +35,13 @@ import {
   sendAppointmentReminder24h,
 } from '../_shared/whatsapp.ts'
 import {
-  sendAppointmentConfirmationEmail,
   sendStaffAppointmentBookedEmail,
 } from '../_shared/email.ts'
 import { sendStaffWhatsAppNotification, staffTemplateName } from '../_shared/staff-whatsapp.ts'
+import {
+  buildPendingWhatsAppBookingRequestState,
+  getWhatsAppBookingCreationNotificationPlan,
+} from '../_shared/whatsapp-booking-request-flow.ts'
 import {
   callDrAde,
   analyzeImageWithDrAde,
@@ -56,8 +59,6 @@ import { sendPatientReplyWithDeps } from '../_shared/patient-reply-sender.ts'
 import type { PatientReplyRoute } from '../_shared/voice-reply-policy.ts'
 import {
   checkCalendarConflict,
-  cancelAppointmentEvent,
-  createAppointmentEvent,
   isCalendarConfigured,
 } from '../_shared/calendar.ts'
 import {
@@ -141,11 +142,6 @@ import type {
 
 const BATCH_SIZE = 5
 const MAX_RETRY_COUNT = 3
-
-const CENTER_ADDRESSES: Record<string, string> = {
-  Karu: 'No. 11 Ali Amodu Close (behind CBN Quarters), Karu, Abuja',
-  Galadimawa: 'No. 10 Royal Homes Estate, Galadinmawa, Abuja',
-}
 
 const FIXED_CRISIS_RESPONSE = `I'm really sorry you're feeling this way. You're not alone, and immediate help is available.
 
@@ -1959,16 +1955,14 @@ function buildAvailabilityConfirmationMessage(
   const patientName = session.collected_name ?? 'Patient'
   const serviceType = normalizeServiceType(session.collected_service_type)
   const center = normalizeCenter(session.collected_center ?? 'Galadimawa')
-  const doctorName = shouldAssignDoctorDuringBooking(session.collected_doctor_preference)
-    ? availability.doctor?.name ?? 'To be assigned'
-    : 'To be assigned'
+  const doctorPreference = session.collected_doctor_preference ?? 'Any available doctor'
   const date = formatDisplayDate(availability.appointmentDate)
   const time = availability.appointmentTime.slice(0, 5)
   const statusLine = availability.status === 'available'
     ? 'That time is available. Please confirm these details if you would like me to submit your appointment request:'
     : 'That time looks available. Please confirm these details if you would like me to submit your appointment request. Our team will send the final confirmation shortly.'
 
-  return `Let me check that for you.\n\n${statusLine}\n\nName: ${patientName}\nService: ${serviceType}\nDate: ${date}\nTime: ${time}\nCenter: ${center}\nDoctor: ${doctorName}\nEmail: ${session.collected_email ?? 'Not provided'}\n\nReply YES to confirm or NO to cancel.`
+  return `Let me check that for you.\n\n${statusLine}\n\nName: ${patientName}\nService: ${serviceType}\nDate: ${date}\nTime: ${time}\nCenter: ${center}\nDoctor preference: ${doctorPreference}\nEmail: ${session.collected_email ?? 'Not provided'}\n\nReply YES to submit this appointment request or NO to cancel.`
 }
 
 function buildUnavailableSlotMessage(availability: Pick<AppointmentAvailabilityResult, 'alternatives'>): string {
@@ -2017,36 +2011,27 @@ async function finalizeBooking(
     }
   }
 
-  const doctor = availability.doctor
-  const assignDoctorNow = shouldAssignDoctorDuringBooking(session.collected_doctor_preference)
-  const assignedDoctor = assignDoctorNow ? doctor : null
-  const doctorName = assignedDoctor?.name ?? 'To be assigned'
-  const calendarStatusBeforeInsert = assignedDoctor
-    ? (availability.status === 'available' ? 'checked_available' : availability.calendarStatus)
-    : 'pending_no_matched_doctor'
-  const calendarErrorBeforeInsert = assignedDoctor && availability.status === 'needs_review'
-    ? availability.calendarError
-    : null
-  const reason = [
-    'Booked via WhatsApp AI',
-    session.collected_doctor_preference ? `Doctor preference: ${session.collected_doctor_preference}` : null,
-    `Calendar status: ${calendarStatusBeforeInsert}`,
-    calendarErrorBeforeInsert ? `Calendar note: ${formatCalendarStatusForStaff(calendarStatusBeforeInsert)}` : null,
-  ].filter(Boolean).join(' | ')
+  const requestState = buildPendingWhatsAppBookingRequestState({
+    doctorPreference: session.collected_doctor_preference ?? 'Any available doctor',
+  })
+  const notificationPlan = getWhatsAppBookingCreationNotificationPlan()
+  const doctorName = 'To be assigned'
+  const calendarStatusBeforeInsert = requestState.calendarSyncStatus
+  const calendarErrorBeforeInsert = requestState.calendarSyncError
 
   const appointmentId = await createWhatsAppAppointmentWithLock(supabase, {
     patientId: session.patient_id,
-    doctorId: assignedDoctor?.id ?? null,
+    doctorId: requestState.doctorId,
     bookingSessionId: session.id,
-    heldSlotId: assignedDoctor?.id ? session.held_slot_id ?? null : null,
+    heldSlotId: requestState.heldSlotId,
     appointmentDate,
     appointmentTime,
     center,
     serviceType,
-    reason,
-    status: 'pending',
-    calendarSyncStatus: calendarStatusBeforeInsert,
-    calendarSyncError: calendarErrorBeforeInsert,
+    reason: requestState.reason,
+    status: requestState.status,
+    calendarSyncStatus: requestState.calendarSyncStatus,
+    calendarSyncError: requestState.calendarSyncError,
   })
 
   if (!appointmentId) {
@@ -2066,74 +2051,10 @@ async function finalizeBooking(
     }
   }
 
-  let calendarEventId: string | null = null
-  let status: 'pending' | 'confirmed' = 'pending'
-  let calendarStatus = calendarStatusBeforeInsert
-  let calendarError = calendarErrorBeforeInsert
-
-  if (availability.status === 'available' && assignedDoctor?.id) {
-    try {
-      calendarEventId = await createAppointmentEvent({
-        patientName,
-        patientPhone: phoneNumber,
-        doctorName,
-        serviceType,
-        center,
-        appointmentDate,
-        appointmentTime,
-        reason: 'Booked via WhatsApp',
-      })
-      status = 'confirmed'
-      calendarStatus = 'synced'
-      calendarError = null
-
-      const { error } = await supabase
-        .from('appointments')
-        .update({
-          status,
-          google_calendar_event_id: calendarEventId,
-          google_calendar_synced_at: new Date().toISOString(),
-          calendar_sync_status: calendarStatus,
-          calendar_sync_error: null,
-          reason: [
-            'Booked via WhatsApp AI',
-            session.collected_doctor_preference ? `Doctor preference: ${session.collected_doctor_preference}` : null,
-            'Calendar status: synced',
-          ].filter(Boolean).join(' | '),
-        })
-        .eq('id', appointmentId)
-
-      if (error) throw new Error(error.message)
-    } catch (err) {
-      status = 'pending'
-      calendarStatus = 'pending_calendar_error'
-      calendarError = err instanceof Error ? err.message : String(err)
-      console.error('[ai-assistant] Google Calendar event creation failed; appointment will stay pending:', err)
-
-      if (calendarEventId) {
-        await cancelAppointmentEvent(calendarEventId).catch((cleanupErr) => {
-          console.error('[ai-assistant] Failed to clean up calendar event after DB update error:', cleanupErr)
-        })
-      }
-
-      await supabase
-        .from('appointments')
-        .update({
-          status,
-          google_calendar_event_id: null,
-          google_calendar_synced_at: null,
-          calendar_sync_status: calendarStatus,
-          calendar_sync_error: calendarError,
-          reason: [
-            'Booked via WhatsApp AI',
-            session.collected_doctor_preference ? `Doctor preference: ${session.collected_doctor_preference}` : null,
-            `Calendar status: ${calendarStatus}`,
-            `Calendar note: ${formatCalendarStatusForStaff(calendarStatus)}`,
-          ].filter(Boolean).join(' | '),
-        })
-        .eq('id', appointmentId)
-    }
-  }
+  await releaseSlotHold(supabase, session.held_slot_id ?? null)
+  const status: 'pending' = requestState.status
+  const calendarStatus = calendarStatusBeforeInsert
+  const calendarError = calendarErrorBeforeInsert
 
   const patientUpdates: Record<string, string> = {}
   if (session.collected_name) patientUpdates.name = session.collected_name
@@ -2144,77 +2065,28 @@ async function finalizeBooking(
     await supabase.from('patients').update(patientUpdates).eq('id', session.patient_id)
   }
 
-  await notifyStaffOfBookedAppointment(supabase, {
-    appointmentId,
-    patientId: session.patient_id,
-    status,
-    patientName,
-    patientPhone: phoneNumber,
-    patientEmail,
-    serviceType,
-    formattedDate,
-    appointmentDate,
-    appointmentTime,
-    center,
-    doctorName,
-    assignedDoctor,
-    doctorPreference: session.collected_doctor_preference ?? 'Any available doctor',
-    calendarStatus,
-    calendarError,
-  })
-
-  if (patientEmail) {
-    try {
-      await sendAppointmentConfirmationEmail({
-        patientEmail,
-        patientName,
-        appointmentDate: formattedDate,
-        appointmentTime: appointmentTime.slice(0, 5),
-        center,
-        centerAddress: CENTER_ADDRESSES[center] ?? center,
-        doctorName,
-        serviceType,
-        status,
-      })
-      await logAppointmentNotification(supabase, {
-        patientId: session.patient_id,
-        appointmentId,
-        notificationType: 'appointment_confirmation',
-        templateName: 'appointment_confirmation',
-        channel: 'email',
-        message: `Patient appointment email sent to ${patientEmail}`,
-        status: 'sent',
-        recipientRole: 'patient',
-        recipientName: patientName,
-        recipientPhone: null,
-      })
-    } catch (err) {
-      console.error('[ai-assistant] Email confirmation failed:', err)
-      await logAppointmentNotification(supabase, {
-        patientId: session.patient_id,
-        appointmentId,
-        notificationType: 'appointment_confirmation',
-        templateName: 'appointment_confirmation',
-        channel: 'email',
-        message: `Patient appointment email failed for ${patientEmail}`,
-        status: 'failed',
-        errorMessage: (err as Error).message,
-        recipientRole: 'patient',
-        recipientName: patientName,
-        recipientPhone: null,
-      })
-    }
+  if (notificationPlan.notifyStaffRequest) {
+    await notifyStaffOfBookedAppointment(supabase, {
+      appointmentId,
+      patientId: session.patient_id,
+      status,
+      patientName,
+      patientPhone: phoneNumber,
+      patientEmail,
+      serviceType,
+      formattedDate,
+      appointmentDate,
+      appointmentTime,
+      center,
+      doctorName,
+      assignedDoctor: null,
+      doctorPreference: session.collected_doctor_preference ?? 'Any available doctor',
+      calendarStatus,
+      calendarError,
+    })
   }
 
   console.log(`[ai-assistant] Booking ${status}: ${patientName} on ${appointmentDate} at ${appointmentTime} (${center})`)
-
-  if (status === 'confirmed') {
-    return {
-      response: `Your appointment is confirmed at Serenity Royale Hospital.\n\nName: ${patientName}\nService: ${serviceType}\nDate: ${formattedDate}\nTime: ${appointmentTime.slice(0, 5)}\nCenter: ${center}\nDoctor: ${doctorName}\n\nPlease arrive 10-15 minutes early. To reschedule, reply here or call +234 806 219 7384.`,
-      completed: true,
-      sentiment: 'positive',
-    }
-  }
 
   return {
     response: `Thank you. Your appointment request has been received.\n\nName: ${patientName}\nService: ${serviceType}\nPreferred date: ${formattedDate}\nPreferred time: ${appointmentTime.slice(0, 5)}\nCenter: ${center}\nDoctor preference: ${session.collected_doctor_preference ?? 'Any available doctor'}\n\nOur team will confirm the exact slot shortly. For urgent help, call +234 806 219 7384.`,
@@ -2288,7 +2160,7 @@ async function notifyStaffOfBookedAppointment(
     }
   }
 
-  if (Deno.env.get('BOOKING_NOTIFY_EMAIL_ENABLED') !== 'false') {
+  if (params.status === 'confirmed' && Deno.env.get('BOOKING_NOTIFY_EMAIL_ENABLED') !== 'false') {
     try {
       await sendStaffAppointmentBookedEmail({
         appointmentId: params.appointmentId,

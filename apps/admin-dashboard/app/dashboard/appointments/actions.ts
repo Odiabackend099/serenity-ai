@@ -32,6 +32,8 @@ function confirmationNotice(result: ConfirmAppointmentResult): string {
       return 'missing-doctor'
     case 'notification_failed':
       return 'notification-issue'
+    case 'schedule_needs_check':
+      return 'schedule-needs-check'
     default:
       return 'could-not-save'
   }
@@ -91,6 +93,7 @@ export async function confirmAppointment(appointmentId: string, formData?: FormD
       return {
         ok: res.ok,
         errorText: res.errorText,
+        json: res.json,
       }
     },
     logError: (message, error) => console.error(message, error),
@@ -150,6 +153,55 @@ export async function updateAppointmentStatus(
   revalidatePath('/dashboard')
   const notice = status === 'completed' ? 'completed' : status === 'no_show' ? 'did-not-attend' : status === 'confirmed' ? 'confirmed' : 'updated'
   redirect(appointmentNoticeUrl(appointmentId, notice))
+}
+
+export async function updatePendingAppointmentSchedule(
+  appointmentId: string,
+  formData: FormData,
+): Promise<void> {
+  const { supabase } = await requireAppointmentActionUser(appointmentId)
+  const appointmentDate = formData.get('appointment_date')?.toString() ?? ''
+  const appointmentTime = formData.get('appointment_time')?.toString() ?? ''
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(appointmentDate) || !/^\d{2}:\d{2}$/.test(appointmentTime)) {
+    redirect(appointmentNoticeUrl(appointmentId, 'could-not-save'))
+  }
+
+  const { data: appointment, error: lookupError } = await supabase
+    .from('appointments')
+    .select('status, doctor_id')
+    .eq('id', appointmentId)
+    .single()
+
+  if (lookupError || !appointment) {
+    if (lookupError) console.error('[appointments] schedule update lookup failed:', lookupError.message)
+    redirect(appointmentNoticeUrl(appointmentId, 'not-found'))
+  }
+
+  if (appointment.status !== 'pending') {
+    redirect(appointmentNoticeUrl(appointmentId, 'could-not-save'))
+  }
+
+  const { error } = await supabase
+    .from('appointments')
+    .update({
+      appointment_date: appointmentDate,
+      appointment_time: `${appointmentTime}:00`,
+      calendar_sync_status: appointment.doctor_id ? 'not_checked' : 'pending_no_matched_doctor',
+      calendar_sync_error: null,
+      google_calendar_event_id: null,
+      google_calendar_synced_at: null,
+    })
+    .eq('id', appointmentId)
+
+  if (error) {
+    console.error('[appointments] schedule update failed:', error.message)
+    redirect(appointmentNoticeUrl(appointmentId, 'could-not-save'))
+  }
+
+  revalidatePath('/dashboard/appointments')
+  revalidatePath('/dashboard')
+  redirect(appointmentNoticeUrl(appointmentId, 'schedule-updated'))
 }
 
 export async function cancelAppointment(appointmentId: string): Promise<void> {

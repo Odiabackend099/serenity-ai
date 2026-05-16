@@ -248,6 +248,24 @@ describe('dashboard appointment confirmation integration flow', () => {
     expect(harness.logs).toHaveLength(0)
   })
 
+  it('blocks dashboard confirmation when Google Calendar reports the slot is busy', async () => {
+    const harness = makeDeps({ calendarBusy: true })
+
+    const result = await confirmDashboardAppointmentWithDeps('appt-1', harness.deps)
+
+    expect(result).toMatchObject({
+      confirmed: false,
+      calendarStatus: 'pending_calendar_busy',
+    })
+    expect(harness.updates[0]).toMatchObject({
+      status: 'pending',
+      calendar_sync_status: 'pending_calendar_busy',
+    })
+    expect(harness.sentTexts).toHaveLength(0)
+    expect(harness.emails).toHaveLength(0)
+    expect(harness.logs).toHaveLength(0)
+  })
+
   it('blocks dashboard confirmation when assigned doctor does not serve the appointment center', async () => {
     const harness = makeDeps({
       appointment: {
