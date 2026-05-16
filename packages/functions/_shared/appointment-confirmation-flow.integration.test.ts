@@ -120,7 +120,7 @@ describe('dashboard appointment confirmation integration flow', () => {
   it('confirms a selected-doctor appointment, creates calendar proof, and notifies all parties', async () => {
     const harness = makeDeps()
 
-    const result = await confirmDashboardAppointmentWithDeps('appt-1', harness.deps)
+    const result = await confirmDashboardAppointmentWithDeps('appt-1', harness.deps, { dedupe: true })
 
     expect(result).toMatchObject({
       confirmed: true,
@@ -161,7 +161,7 @@ describe('dashboard appointment confirmation integration flow', () => {
       hasDashboardConfirmationNotifications: true,
     })
 
-    const result = await confirmDashboardAppointmentWithDeps('appt-1', harness.deps)
+    const result = await confirmDashboardAppointmentWithDeps('appt-1', harness.deps, { dedupe: true })
 
     expect(result).toMatchObject({
       confirmed: true,
@@ -185,6 +185,26 @@ describe('dashboard appointment confirmation integration flow', () => {
     const result = await confirmDashboardAppointmentWithDeps('appt-1', harness.deps, { resend: true })
 
     expect(result).toMatchObject({ confirmed: true })
+    expect(harness.sentTexts.map((message) => message.to)).toEqual([
+      '+2349137565087',
+      '+2348072023652',
+      '+2348062197384',
+    ])
+  })
+
+  it('keeps legacy resend calls working when no dedupe marker is provided', async () => {
+    const harness = makeDeps({
+      appointment: {
+        ...baseAppointment,
+        status: 'confirmed',
+        google_calendar_event_id: 'google-event-existing',
+        calendar_sync_status: 'synced',
+      },
+      hasDashboardConfirmationNotifications: true,
+    })
+
+    await confirmDashboardAppointmentWithDeps('appt-1', harness.deps)
+
     expect(harness.sentTexts.map((message) => message.to)).toEqual([
       '+2349137565087',
       '+2348072023652',

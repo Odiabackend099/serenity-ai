@@ -84,6 +84,7 @@ export async function confirmAppointment(appointmentId: string, formData?: FormD
     callNotificationFunction: async (payload) => {
       const res = await callInternalEdgeFunction('send-notification', {
         ...payload,
+        dedupe: !resend,
         ...(resend ? { resend: true } : {}),
       })
       if (!res) return null

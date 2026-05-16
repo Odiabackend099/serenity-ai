@@ -60,6 +60,7 @@ type AppointmentDashboardConfirmationPayload = {
   type: 'appointment_dashboard_confirmation'
   appointmentId: string
   resend?: boolean
+  dedupe?: boolean
 }
 
 type ManualMessagePayload = {
@@ -149,7 +150,10 @@ serve(async (req: Request) => {
       }
 
       try {
-        const result = await confirmAppointmentFromDashboard(payload.appointmentId, { resend: payload.resend === true })
+        const result = await confirmAppointmentFromDashboard(payload.appointmentId, {
+          resend: payload.resend === true,
+          dedupe: payload.dedupe === true,
+        })
         return Response.json(result)
       } catch (err) {
         console.error('[send-notification] dashboard confirmation failed:', (err as Error).message)
@@ -279,7 +283,7 @@ serve(async (req: Request) => {
 
 async function confirmAppointmentFromDashboard(
   appointmentId: string,
-  options: { resend?: boolean } = {},
+  options: { resend?: boolean; dedupe?: boolean } = {},
 ): Promise<Record<string, unknown>> {
   const supabase = getSupabaseClient()
   return confirmDashboardAppointmentWithDeps(appointmentId, {

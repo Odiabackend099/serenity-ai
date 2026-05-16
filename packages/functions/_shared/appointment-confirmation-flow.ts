@@ -111,7 +111,7 @@ export type DashboardConfirmationDeps = {
 export async function confirmDashboardAppointmentWithDeps(
   appointmentId: string,
   deps: DashboardConfirmationDeps,
-  options: { resend?: boolean } = {},
+  options: { resend?: boolean; dedupe?: boolean } = {},
 ): Promise<Record<string, unknown>> {
   const appointment = await deps.loadAppointment(appointmentId)
 
@@ -144,7 +144,7 @@ export async function confirmDashboardAppointmentWithDeps(
     }
   }
 
-  if (appointment.status === 'confirmed' && !options.resend && await deps.hasDashboardConfirmationNotifications?.(appointmentId)) {
+  if (options.dedupe && appointment.status === 'confirmed' && !options.resend && await deps.hasDashboardConfirmationNotifications?.(appointmentId)) {
     return {
       confirmed: true,
       appointmentId,
