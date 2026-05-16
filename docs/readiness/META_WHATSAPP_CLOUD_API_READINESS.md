@@ -22,6 +22,7 @@ https://iwkkhuozhfzmpvroprpv.supabase.co/functions/v1/whatsapp-webhook
 - The shared inbound path supports Meta and Twilio.
 - Staff booking alerts are sending through Meta.
 - The dashboard link in staff alerts now uses login with a return target.
+- Meta outbound status callbacks are recorded against `notifications.external_message_id` so accepted sends can later become delivered, read, or failed.
 
 ## Current Behavior
 
@@ -33,6 +34,12 @@ https://iwkkhuozhfzmpvroprpv.supabase.co/functions/v1/whatsapp-webhook
   - Secretary
   - Dr K
 - `"Any available doctor"` remains unassigned until dashboard confirmation.
+- Dashboard confirmation notifies:
+  - patient
+  - secretary
+  - Dr K
+  - assigned doctor
+- The dashboard treats Meta `sent` as "waiting for delivery" until a delivery/read/failure webhook arrives.
 
 ## Provider Rule
 
@@ -45,6 +52,10 @@ https://iwkkhuozhfzmpvroprpv.supabase.co/functions/v1/whatsapp-webhook
 - The public hostname now points to a ready Vercel deployment.
 - New staff notification links use:
   - `/auth/login?next=/dashboard/appointments?appointment=<id>`
+- Approved Meta utility templates should be configured for staff booking and confirmation notifications:
+  - `WHATSAPP_STAFF_BOOKING_ALERT_TEMPLATE`
+  - `WHATSAPP_STAFF_CONFIRMATION_TEMPLATE`
+  - `WHATSAPP_ASSIGNED_DOCTOR_CONFIRMATION_TEMPLATE`
 - Existing secrets/tokens should be rotated after debugging sessions if they were exposed outside the platform.
 
 ## Remaining Validation
@@ -55,3 +66,4 @@ https://iwkkhuozhfzmpvroprpv.supabase.co/functions/v1/whatsapp-webhook
 4. Assigns a doctor.
 5. Confirms appointment.
 6. Verify final WhatsApp/email confirmation fanout.
+7. Verify staff WhatsApp rows move from `sent` to `delivered`, `read`, or `failed` in `notifications`.

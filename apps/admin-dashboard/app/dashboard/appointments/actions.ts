@@ -51,6 +51,7 @@ async function requireAppointmentActionUser(appointmentId: string) {
 
 export async function confirmAppointment(appointmentId: string, formData?: FormData): Promise<void> {
   const doctorId = formData?.get('doctor_id')?.toString() || null
+  const resend = formData?.get('intent')?.toString() === 'resend'
   const { supabase } = await requireAppointmentActionUser(appointmentId)
   const result = await confirmAppointmentWithDeps(appointmentId, doctorId, {
     assignDoctor: async (id, selectedDoctorId) => {
@@ -81,7 +82,10 @@ export async function confirmAppointment(appointmentId: string, formData?: FormD
       if (error) throw new Error(error.message)
     },
     callNotificationFunction: async (payload) => {
-      const res = await callInternalEdgeFunction('send-notification', payload)
+      const res = await callInternalEdgeFunction('send-notification', {
+        ...payload,
+        ...(resend ? { resend: true } : {}),
+      })
       if (!res) return null
       return {
         ok: res.ok,

@@ -13,8 +13,11 @@ import { handleTwilioWebhookRequest, processTwilioMessageParams } from '../_shar
 import {
   handleMetaWebhookRequest,
   processMetaInboundMessage,
+  processMetaOutboundStatuses,
   type MetaInboundMessage,
   type MetaMessageQueuePayload,
+  type MetaOutboundMessageStatus,
+  type MetaStatusNotificationUpdate,
 } from '../_shared/meta-whatsapp-webhook-flow.ts'
 
 type EdgeRuntimeLike = {
@@ -29,6 +32,7 @@ serve(async (req: Request) => {
         ?? Deno.env.get('WEBHOOK_VERIFY_TOKEN'),
       appSecret: Deno.env.get('META_APP_SECRET') ?? Deno.env.get('WHATSAPP_APP_SECRET'),
       processMessage: processMetaMessage,
+      processStatuses: processMetaStatuses,
       triggerAiAssistant,
       runInBackground,
     })
@@ -101,6 +105,30 @@ async function processMetaMessage(message: MetaInboundMessage): Promise<string |
       return queued
     },
   })
+}
+
+async function processMetaStatuses(statuses: MetaOutboundMessageStatus[]): Promise<void> {
+  const supabase = getSupabaseClient()
+  return processMetaOutboundStatuses(statuses, {
+    updateNotificationByExternalMessageId: async (messageId, update) => {
+      const { error } = await supabase
+        .from('notifications')
+        .update(notificationStatusUpdatePayload(update))
+        .eq('external_message_id', messageId)
+
+      if (error) throw new Error(error.message)
+    },
+  })
+}
+
+function notificationStatusUpdatePayload(update: MetaStatusNotificationUpdate): Record<string, unknown> {
+  return {
+    status: update.status,
+    ...(update.sent_at ? { sent_at: update.sent_at } : {}),
+    ...(update.delivered_at ? { delivered_at: update.delivered_at } : {}),
+    ...(update.read_at ? { read_at: update.read_at } : {}),
+    ...(update.error_message !== undefined ? { error_message: update.error_message } : {}),
+  }
 }
 
 async function triggerAiAssistant(queueItemId: string): Promise<void> {

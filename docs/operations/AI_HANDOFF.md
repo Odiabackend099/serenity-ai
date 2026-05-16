@@ -89,6 +89,13 @@ Passwords were set live to the user-provided value but are intentionally **not s
 
 ## Current Notification Behavior
 
+Staff WhatsApp rows now separate provider acceptance from phone delivery:
+
+- `sent` means Meta accepted the message and the dashboard shows "Waiting for delivery"
+- `delivered` means WhatsApp reported delivery to the phone
+- `read` means WhatsApp reported the message was read
+- `failed` means WhatsApp reported a delivery failure and the dashboard should show "Needs resend"
+
 ### On appointment request
 
 - Patient receives request-received response on WhatsApp
@@ -105,6 +112,8 @@ The intended confirmation fanout is:
 - secretary WhatsApp
 - Dr K WhatsApp
 - assigned doctor WhatsApp
+
+Approved Meta utility templates should be used for proactive staff notifications when available. Configure `WHATSAPP_STAFF_BOOKING_ALERT_TEMPLATE`, `WHATSAPP_STAFF_CONFIRMATION_TEMPLATE`, and `WHATSAPP_ASSIGNED_DOCTOR_CONFIRMATION_TEMPLATE` in Supabase secrets after Meta approval.
 
 ## Important Files
 
@@ -123,5 +132,6 @@ The intended confirmation fanout is:
    - assigns doctor
    - confirms appointment
    - verify final fanout to patient, secretary, Dr K, and assigned doctor
+   - verify Meta status webhooks update `notifications.delivered_at`, `notifications.read_at`, or `notifications.error_message`
 2. Stabilize Vercel production deployment so the hostname no longer depends on a ready deployment alias.
 3. Rotate exposed debug tokens after this session.

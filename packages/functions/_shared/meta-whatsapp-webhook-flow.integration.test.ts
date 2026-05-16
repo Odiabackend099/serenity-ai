@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  extractMetaOutboundStatuses,
   extractMetaInboundMessages,
   handleMetaWebhookRequest,
+  metaStatusToNotificationUpdate,
   processMetaInboundMessage,
+  processMetaOutboundStatuses,
   verifyMetaWebhookSignature,
+  type MetaStatusNotificationUpdate,
   type MetaMessageQueuePayload,
 } from './meta-whatsapp-webhook-flow.ts'
 
@@ -159,7 +163,7 @@ describe('Meta WhatsApp webhook integration flow', () => {
     expect(triggered).toEqual(['queue-meta-1'])
   })
 
-  it('skips status callbacks and duplicate inbound messages safely', async () => {
+  it('records status callbacks and skips duplicate inbound messages safely', async () => {
     const statusOnly = {
       object: 'whatsapp_business_account',
       entry: [{
@@ -169,13 +173,23 @@ describe('Meta WhatsApp webhook integration flow', () => {
             statuses: [{
               id: 'wamid.status-only',
               status: 'delivered',
+              timestamp: '1778490000',
+              recipient_id: '2348072023652',
             }],
           },
         }],
       }],
     }
+    const updates: Array<{ messageId: string; update: MetaStatusNotificationUpdate }> = []
 
     const noMessages = extractMetaInboundMessages(statusOnly)
+    const statuses = extractMetaOutboundStatuses(statusOnly)
+    await processMetaOutboundStatuses(statuses, {
+      logger: quietLogger(),
+      updateNotificationByExternalMessageId: async (messageId, update) => {
+        updates.push({ messageId, update })
+      },
+    })
     const duplicate = await processMetaInboundMessage(extractMetaInboundMessages(metaPayload())[0], {
       logger: quietLogger(),
       findExistingQueuedMessage: async () => ({ id: 'queue-existing' }),
@@ -184,7 +198,53 @@ describe('Meta WhatsApp webhook integration flow', () => {
     })
 
     expect(noMessages).toEqual([])
+    expect(statuses).toEqual([{
+      messageId: 'wamid.status-only',
+      status: 'delivered',
+      recipientId: '2348072023652',
+      timestamp: '2026-05-11T09:00:00.000Z',
+      errorMessage: null,
+      rawPayload: statusOnly,
+    }])
+    expect(updates).toEqual([{
+      messageId: 'wamid.status-only',
+      update: {
+        status: 'delivered',
+        delivered_at: '2026-05-11T09:00:00.000Z',
+        error_message: null,
+      },
+    }])
     expect(duplicate).toBeNull()
+  })
+
+  it('maps failed Meta status callbacks into staff-readable notification updates', () => {
+    const statuses = extractMetaOutboundStatuses({
+      object: 'whatsapp_business_account',
+      entry: [{
+        changes: [{
+          field: 'messages',
+          value: {
+            statuses: [{
+              id: 'wamid.failed-1',
+              status: 'failed',
+              recipient_id: '2348062197384',
+              errors: [{
+                code: 131030,
+                title: 'Recipient phone number not in allowed list',
+                message: 'Message failed to send',
+                error_data: { details: 'Recipient phone number not in allowed list' },
+              }],
+            }],
+          },
+        }],
+      }],
+    })
+
+    expect(statuses).toHaveLength(1)
+    expect(metaStatusToNotificationUpdate(statuses[0])).toEqual({
+      status: 'failed',
+      error_message: 'Meta error 131030: Recipient phone number not in allowed list: Message failed to send: Recipient phone number not in allowed list',
+    })
   })
 
   it('extracts media messages using safe placeholders', () => {

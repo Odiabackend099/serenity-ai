@@ -10,7 +10,8 @@ export type NotificationLike = {
 export function formatNotificationDetail(notification: NotificationLike | undefined, fallback: string): string {
   if (!notification) return fallback
   const recipient = [notification.recipient_name, notification.recipient_phone].filter(Boolean).join(' · ')
-  const status = humanizeProviderError(notification.error_message) ?? humanizeProviderError(notification.status) ?? humanizeNotificationStatus(notification.status)
+  const status = humanizeProviderError(notification.error_message)
+    ?? notificationStatusDetail(notification.status)
   return recipient ? `${recipient}: ${status}` : status
 }
 
@@ -66,13 +67,18 @@ export function humanizeProviderError(error?: string | null): string | null {
 
 export function humanizeNotificationStatus(status?: string | null): string {
   if (status === 'synced') return 'Saved'
-  if (status === 'sent') return 'Sent'
+  if (status === 'sent') return 'Waiting for delivery'
   if (status === 'delivered') return 'Delivered'
   if (status === 'read') return 'Read'
   if (status === 'failed') return 'Failed'
   if (status === 'pending') return 'Waiting to send'
   if (status === 'skipped') return 'Skipped'
   return status ?? 'No status'
+}
+
+function notificationStatusDetail(status?: string | null): string {
+  if (status === 'sent') return 'Sent to WhatsApp. Waiting for delivery confirmation.'
+  return humanizeNotificationStatus(status)
 }
 
 export function normalizeNotificationStatus(status?: string | null): NotificationStatus {

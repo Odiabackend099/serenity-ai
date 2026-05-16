@@ -4,6 +4,7 @@ export type MetaWebhookHandlerDeps = {
   verifyToken?: string | null
   appSecret?: string | null
   processMessage: (message: MetaInboundMessage) => Promise<string | null>
+  processStatuses?: (statuses: MetaOutboundMessageStatus[]) => Promise<void>
   triggerAiAssistant: (queueItemId: string) => Promise<void>
   runInBackground?: (promise: Promise<unknown>) => void
   logger?: MetaWebhookLogger
@@ -18,6 +19,17 @@ export type MetaInboundMessage = {
   messageType: string
   mediaId: string | null
   mediaMimeType: string | null
+  rawPayload: Record<string, unknown>
+}
+
+export type MetaOutboundMessageStatusName = 'sent' | 'delivered' | 'read' | 'failed'
+
+export type MetaOutboundMessageStatus = {
+  messageId: string
+  status: MetaOutboundMessageStatusName
+  recipientId: string | null
+  timestamp: string | null
+  errorMessage: string | null
   rawPayload: Record<string, unknown>
 }
 
@@ -49,6 +61,19 @@ export type MetaMessageProcessorDeps = {
   upsertPatient: (phoneNumber: string, contactName?: string) => Promise<MetaQueuedPatient>
   queueMessage: (payload: MetaMessageQueuePayload) => Promise<MetaQueuedMessage>
   now?: () => Date
+  logger?: MetaWebhookLogger
+}
+
+export type MetaStatusNotificationUpdate = {
+  status: MetaOutboundMessageStatusName
+  sent_at?: string
+  delivered_at?: string
+  read_at?: string
+  error_message?: string | null
+}
+
+export type MetaStatusProcessorDeps = {
+  updateNotificationByExternalMessageId: (messageId: string, update: MetaStatusNotificationUpdate) => Promise<void>
   logger?: MetaWebhookLogger
 }
 
@@ -86,9 +111,16 @@ export async function handleMetaWebhookRequest(
     return new Response('Bad Request', { status: 400 })
   }
 
+  const statuses = extractMetaOutboundStatuses(payload)
   const messages = extractMetaInboundMessages(payload)
 
   try {
+    if (statuses.length > 0 && deps.processStatuses) {
+      await deps.processStatuses(statuses)
+    } else if (statuses.length > 0) {
+      logger.warn(`[meta-webhook] Received ${statuses.length} Meta delivery status update(s), but no status processor is configured`)
+    }
+
     const triggers: Array<Promise<void>> = []
     for (const message of messages) {
       const queueItemId = await deps.processMessage(message)
@@ -162,6 +194,23 @@ export async function processMetaInboundMessage(
   return queued.id
 }
 
+export async function processMetaOutboundStatuses(
+  statuses: MetaOutboundMessageStatus[],
+  deps: MetaStatusProcessorDeps,
+): Promise<void> {
+  const logger = deps.logger ?? console
+
+  for (const status of statuses) {
+    try {
+      await deps.updateNotificationByExternalMessageId(status.messageId, metaStatusToNotificationUpdate(status))
+      logger.log(`[meta-webhook] Recorded Meta delivery status ${status.status} for ${status.messageId}`)
+    } catch (err) {
+      logger.error(`[meta-webhook] Failed to record Meta delivery status ${status.status} for ${status.messageId}:`, err)
+      throw err
+    }
+  }
+}
+
 export function extractMetaInboundMessages(payload: Record<string, unknown>): MetaInboundMessage[] {
   const entries = asArray(payload.entry)
   const messages: MetaInboundMessage[] = []
@@ -200,6 +249,69 @@ export function extractMetaInboundMessages(payload: Record<string, unknown>): Me
   }
 
   return messages
+}
+
+export function extractMetaOutboundStatuses(payload: Record<string, unknown>): MetaOutboundMessageStatus[] {
+  const entries = asArray(payload.entry)
+  const statuses: MetaOutboundMessageStatus[] = []
+
+  for (const entry of entries) {
+    const changes = asArray(entry.changes)
+    for (const change of changes) {
+      const value = asRecord(change.value)
+      const rawStatuses = asArray(value.statuses)
+
+      for (const rawStatus of rawStatuses) {
+        const status = asRecord(rawStatus)
+        const messageId = asString(status.id)
+        const normalizedStatus = normalizeMetaStatus(asString(status.status))
+
+        if (!messageId || !normalizedStatus) continue
+
+        statuses.push({
+          messageId,
+          status: normalizedStatus,
+          recipientId: asString(status.recipient_id) || null,
+          timestamp: metaTimestampToIso(asString(status.timestamp)),
+          errorMessage: getMetaStatusErrorMessage(status),
+          rawPayload: payload,
+        })
+      }
+    }
+  }
+
+  return statuses
+}
+
+export function metaStatusToNotificationUpdate(status: MetaOutboundMessageStatus): MetaStatusNotificationUpdate {
+  const timestamp = status.timestamp ?? new Date().toISOString()
+
+  switch (status.status) {
+    case 'sent':
+      return {
+        status: 'sent',
+        sent_at: timestamp,
+        error_message: null,
+      }
+    case 'delivered':
+      return {
+        status: 'delivered',
+        delivered_at: timestamp,
+        error_message: null,
+      }
+    case 'read':
+      return {
+        status: 'read',
+        delivered_at: timestamp,
+        read_at: timestamp,
+        error_message: null,
+      }
+    case 'failed':
+      return {
+        status: 'failed',
+        error_message: status.errorMessage ?? 'WhatsApp reported that this message was not delivered.',
+      }
+  }
 }
 
 export async function verifyMetaWebhookSignature(
@@ -245,6 +357,35 @@ function getMetaMessageContent(
     mediaId,
     mediaMimeType: mimeType,
   }
+}
+
+function normalizeMetaStatus(status: string): MetaOutboundMessageStatusName | null {
+  if (status === 'sent' || status === 'delivered' || status === 'read' || status === 'failed') return status
+  return null
+}
+
+function metaTimestampToIso(timestamp: string): string | null {
+  if (!timestamp) return null
+  const seconds = Number(timestamp)
+  if (!Number.isFinite(seconds) || seconds <= 0) return null
+  return new Date(seconds * 1000).toISOString()
+}
+
+function getMetaStatusErrorMessage(status: Record<string, unknown>): string | null {
+  const errors = asArray(status.errors)
+  const firstError = asRecord(errors[0])
+  const title = asString(firstError.title)
+  const message = asString(firstError.message)
+  const code = typeof firstError.code === 'number' ? String(firstError.code) : asString(firstError.code)
+  const details = asString(asRecord(firstError.error_data).details)
+  const parts = [
+    code ? `Meta error ${code}` : null,
+    title,
+    message,
+    details,
+  ].filter(Boolean)
+
+  return parts.length > 0 ? parts.join(': ') : null
 }
 
 function getMetaMediaPlaceholder(messageType: string): string {

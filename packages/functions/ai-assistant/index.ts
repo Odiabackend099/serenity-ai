@@ -37,6 +37,7 @@ import {
   sendAppointmentConfirmationEmail,
   sendStaffAppointmentBookedEmail,
 } from '../_shared/email.ts'
+import { sendStaffWhatsAppNotification, staffTemplateName } from '../_shared/staff-whatsapp.ts'
 import {
   callDrAde,
   detectEmergency,
@@ -2170,14 +2171,20 @@ async function notifyStaffOfBookedAppointment(
     for (const recipient of recipients) {
       const whatsappBody = buildStaffWhatsAppMessage({ ...params, dashboardUrl, recipient })
       try {
-        const sid = await sendTextMessage(recipient.phone, whatsappBody)
+        const staffSend = await sendStaffWhatsAppNotification({
+          kind: 'booking_request',
+          to: recipient.phone,
+          text: whatsappBody,
+          bodyParameters: buildStaffBookingTemplateParameters({ ...params, dashboardUrl, recipient }),
+        })
         await logAppointmentNotification(supabase, {
           patientId: params.patientId,
           appointmentId: params.appointmentId,
           channel: 'whatsapp',
-          message: whatsappBody,
+          message: staffSend.messageContent,
           status: 'sent',
-          externalMessageId: sid,
+          externalMessageId: staffSend.externalMessageId,
+          templateName: staffSend.templateName,
           recipientRole: recipient.role,
           recipientName: recipient.name,
           recipientPhone: recipient.phone,
@@ -2192,6 +2199,7 @@ async function notifyStaffOfBookedAppointment(
           message: whatsappBody,
           status: failure.status,
           errorMessage: failure.message,
+          templateName: staffTemplateName('booking_request') ?? 'booking_request_freeform',
           recipientRole: recipient.role,
           recipientName: recipient.name,
           recipientPhone: recipient.phone,
@@ -2323,6 +2331,28 @@ Doctor: ${params.doctorName}
 Preference: ${params.doctorPreference}
 Calendar: ${calendarSummary}
 ${params.dashboardUrl ? `Dashboard: ${params.dashboardUrl}` : ''}`.trim()
+}
+
+function buildStaffBookingTemplateParameters(params: {
+  patientName: string
+  patientPhone: string
+  serviceType: string
+  formattedDate: string
+  appointmentTime: string
+  center: string
+  doctorName: string
+  dashboardUrl: string | null
+}): string[] {
+  return [
+    params.patientName,
+    params.patientPhone || 'Not provided',
+    params.serviceType,
+    params.formattedDate,
+    params.appointmentTime.slice(0, 5),
+    params.center,
+    params.doctorName,
+    params.dashboardUrl ?? 'Open the dashboard',
+  ]
 }
 
 function formatCalendarStatusForStaff(status: string | null): string {

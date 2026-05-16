@@ -46,6 +46,7 @@ function makeDeps(options: {
   calendarBusy?: boolean
   activeAppointments?: Array<{ id: string; appointment_time: string | null; status?: string | null }>
   whatsappErrorFor?: string
+  hasDashboardConfirmationNotifications?: boolean
 } = {}) {
   const logs: NotificationLogInput[] = []
   const updates: Record<string, unknown>[] = []
@@ -107,6 +108,7 @@ function makeDeps(options: {
         return `sid-${to}`
       },
       getStaffRecipients: () => staffRecipients,
+      hasDashboardConfirmationNotifications: async () => options.hasDashboardConfirmationNotifications ?? false,
       logNotification: async (params: NotificationLogInput) => {
         logs.push(params)
       },
@@ -146,6 +148,48 @@ describe('dashboard appointment confirmation integration flow', () => {
       'primary_doctor',
     ].sort())
     expect(harness.logs.every((log) => !log.errorMessage?.includes('{'))).toBe(true)
+  })
+
+  it('does not resend dashboard confirmations for an already-confirmed appointment unless resend is explicit', async () => {
+    const harness = makeDeps({
+      appointment: {
+        ...baseAppointment,
+        status: 'confirmed',
+        google_calendar_event_id: 'google-event-existing',
+        calendar_sync_status: 'synced',
+      },
+      hasDashboardConfirmationNotifications: true,
+    })
+
+    const result = await confirmDashboardAppointmentWithDeps('appt-1', harness.deps)
+
+    expect(result).toMatchObject({
+      confirmed: true,
+      alreadyConfirmed: true,
+    })
+    expect(harness.sentTexts).toHaveLength(0)
+    expect(harness.logs).toHaveLength(0)
+  })
+
+  it('allows explicit resend for an already-confirmed appointment', async () => {
+    const harness = makeDeps({
+      appointment: {
+        ...baseAppointment,
+        status: 'confirmed',
+        google_calendar_event_id: 'google-event-existing',
+        calendar_sync_status: 'synced',
+      },
+      hasDashboardConfirmationNotifications: true,
+    })
+
+    const result = await confirmDashboardAppointmentWithDeps('appt-1', harness.deps, { resend: true })
+
+    expect(result).toMatchObject({ confirmed: true })
+    expect(harness.sentTexts.map((message) => message.to)).toEqual([
+      '+2349137565087',
+      '+2348072023652',
+      '+2348062197384',
+    ])
   })
 
   it('keeps appointment saved and pending for manual review when Google Calendar fails', async () => {

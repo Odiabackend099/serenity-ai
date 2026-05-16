@@ -14,6 +14,7 @@
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { getSupabaseClient, isAuthorizedInternalRequest } from '../_shared/supabase.ts'
 import { sendTextMessage, sendAppointmentConfirmation } from '../_shared/whatsapp.ts'
+import { sendStaffWhatsAppNotification } from '../_shared/staff-whatsapp.ts'
 import { sendAppointmentConfirmationEmail } from '../_shared/email.ts'
 import {
   cancelAppointmentEvent,
@@ -58,6 +59,7 @@ type AppointmentCancellationPayload = {
 type AppointmentDashboardConfirmationPayload = {
   type: 'appointment_dashboard_confirmation'
   appointmentId: string
+  resend?: boolean
 }
 
 type ManualMessagePayload = {
@@ -147,7 +149,7 @@ serve(async (req: Request) => {
       }
 
       try {
-        const result = await confirmAppointmentFromDashboard(payload.appointmentId)
+        const result = await confirmAppointmentFromDashboard(payload.appointmentId, { resend: payload.resend === true })
         return Response.json(result)
       } catch (err) {
         console.error('[send-notification] dashboard confirmation failed:', (err as Error).message)
@@ -275,7 +277,10 @@ serve(async (req: Request) => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function confirmAppointmentFromDashboard(appointmentId: string): Promise<Record<string, unknown>> {
+async function confirmAppointmentFromDashboard(
+  appointmentId: string,
+  options: { resend?: boolean } = {},
+): Promise<Record<string, unknown>> {
   const supabase = getSupabaseClient()
   return confirmDashboardAppointmentWithDeps(appointmentId, {
     loadAppointment: async (id) => {
@@ -322,6 +327,34 @@ async function confirmAppointmentFromDashboard(appointmentId: string): Promise<R
       if (error) throw new Error(error.message)
     },
     sendAppointmentConfirmation,
+    sendStaffWhatsApp: async (input) => {
+      const result = await sendStaffWhatsAppNotification(input)
+      return {
+        externalMessageId: result.externalMessageId,
+        messageContent: result.messageContent,
+        templateName: result.templateName,
+      }
+    },
+    hasDashboardConfirmationNotifications: async (id) => {
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('template_name, message_content')
+        .eq('appointment_id', id)
+        .eq('notification_type', 'staff_booking_alert')
+        .eq('channel', 'whatsapp')
+        .limit(25)
+
+      if (error) throw new Error(error.message)
+
+      return (data ?? []).some((row) => {
+        const templateName = String(row.template_name ?? '')
+        const messageContent = String(row.message_content ?? '')
+        return templateName.includes('dashboard_confirmation')
+          || templateName.includes('assigned_doctor_confirmation')
+          || messageContent.startsWith('Dashboard confirmation alert')
+          || messageContent.startsWith('Dashboard assignment alert')
+      })
+    },
     markPatientConfirmationSent: async (id) => {
       const { error } = await supabase
         .from('appointments')
@@ -333,7 +366,7 @@ async function confirmAppointmentFromDashboard(appointmentId: string): Promise<R
     sendTextMessage,
     getStaffRecipients: getDashboardConfirmationStaffRecipients,
     logNotification,
-  })
+  }, options)
 }
 
 function getDashboardConfirmationStaffRecipients(): StaffRecipient[] {
@@ -404,6 +437,7 @@ async function logNotification(params: {
   status: NotificationStatus
   externalMessageId?: string
   errorMessage?: string
+  templateName?: string
   recipientRole?: 'primary_doctor' | 'operations_manager' | 'assigned_doctor' | 'patient' | 'staff_email' | 'on_call_backup'
   recipientName?: string | null
   recipientPhone?: string | null
@@ -414,7 +448,7 @@ async function logNotification(params: {
     appointment_id: params.appointmentId,
     notification_type: params.notificationType,
     channel: params.channel,
-    template_name: params.notificationType,
+    template_name: params.templateName ?? params.notificationType,
     message_content: params.message.slice(0, 2000),
     status: params.status,
     external_message_id: params.externalMessageId ?? null,

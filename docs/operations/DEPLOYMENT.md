@@ -39,9 +39,19 @@ Important names:
 - `WHATSAPP_PHONE_NUMBER_ID`
 - `WHATSAPP_BUSINESS_ACCOUNT_ID`
 - `WHATSAPP_WEBHOOK_VERIFY_TOKEN`
+- `META_APP_SECRET`
+- `WHATSAPP_STAFF_BOOKING_ALERT_TEMPLATE`
+- `WHATSAPP_STAFF_CONFIRMATION_TEMPLATE`
+- `WHATSAPP_ASSIGNED_DOCTOR_CONFIRMATION_TEMPLATE`
+- `WHATSAPP_TEMPLATE_LANGUAGE`
+- `STAFF_WHATSAPP_REQUIRE_TEMPLATES`
+- `STAFF_WHATSAPP_FREEFORM_FALLBACK`
 - `ADMIN_DASHBOARD_URL`
 - `GOOGLE_SERVICE_ACCOUNT_JSON`
 - `GOOGLE_CALENDAR_ID`
+
+For staff WhatsApp reliability, configure approved Meta utility templates for booking request and dashboard confirmation alerts. If templates are not configured, the code can fall back to free-form text, but delivery outside a WhatsApp customer-service window is less reliable and must be verified through delivery status callbacks.
+Once templates are approved, set `STAFF_WHATSAPP_REQUIRE_TEMPLATES=true` and leave `STAFF_WHATSAPP_FREEFORM_FALLBACK` unset or false so template failures surface as dashboard resend issues instead of silently reverting to free-form text.
 
 ## Dashboard Deployment Notes
 
@@ -68,6 +78,7 @@ Passwords are intentionally not stored here.
 5. Click the staff link and verify login redirects back to the appointment.
 6. Assign a doctor and confirm the appointment from the dashboard.
 7. Verify final notification fanout.
+8. Confirm `notifications.delivered_at`, `notifications.read_at`, or `notifications.error_message` updates from Meta status webhooks for staff WhatsApp rows.
 
 ## Dashboard Action QA Gate
 

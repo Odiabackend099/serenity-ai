@@ -17,6 +17,7 @@ export type DashboardAppointmentRecord = {
   id: string
   patient_id: string
   doctor_id: string | null
+  status?: string | null
   appointment_date: string
   appointment_time: string | null
   center: string | null
@@ -38,9 +39,25 @@ export type NotificationLogInput = {
   status: NotificationStatus
   externalMessageId?: string
   errorMessage?: string
+  templateName?: string
   recipientRole?: 'primary_doctor' | 'operations_manager' | 'assigned_doctor' | 'patient' | 'staff_email' | 'on_call_backup'
   recipientName?: string | null
   recipientPhone?: string | null
+}
+
+export type StaffWhatsAppKind = 'dashboard_confirmation' | 'assigned_doctor_confirmation'
+
+export type StaffWhatsAppInput = {
+  kind: StaffWhatsAppKind
+  to: string
+  text: string
+  bodyParameters: string[]
+}
+
+export type StaffWhatsAppResult = {
+  externalMessageId: string
+  messageContent: string
+  templateName: string
 }
 
 export type DashboardConfirmationDeps = {
@@ -84,7 +101,9 @@ export type DashboardConfirmationDeps = {
     status: 'confirmed'
   }) => Promise<void>
   sendTextMessage: (to: string, text: string) => Promise<string>
+  sendStaffWhatsApp?: (input: StaffWhatsAppInput) => Promise<StaffWhatsAppResult>
   getStaffRecipients: () => StaffRecipient[]
+  hasDashboardConfirmationNotifications?: (appointmentId: string) => Promise<boolean>
   logNotification: (params: NotificationLogInput) => Promise<void>
   now?: () => Date
 }
@@ -92,6 +111,7 @@ export type DashboardConfirmationDeps = {
 export async function confirmDashboardAppointmentWithDeps(
   appointmentId: string,
   deps: DashboardConfirmationDeps,
+  options: { resend?: boolean } = {},
 ): Promise<Record<string, unknown>> {
   const appointment = await deps.loadAppointment(appointmentId)
 
@@ -121,6 +141,24 @@ export async function confirmDashboardAppointmentWithDeps(
       calendarStatus: 'pending_no_matched_doctor',
       message: 'Doctor assignment is required before appointment confirmation.',
       results: { calendar: 'skipped', whatsapp: 'skipped', email: 'skipped', assignedDoctorWhatsapp: 'skipped' },
+    }
+  }
+
+  if (appointment.status === 'confirmed' && !options.resend && await deps.hasDashboardConfirmationNotifications?.(appointmentId)) {
+    return {
+      confirmed: true,
+      appointmentId,
+      calendarStatus: appointment.calendar_sync_status ?? 'synced',
+      calendarError: null,
+      alreadyConfirmed: true,
+      results: {
+        calendar: appointment.calendar_sync_status === 'synced',
+        whatsapp: 'skipped',
+        email: 'skipped',
+        assignedDoctorWhatsapp: 'skipped',
+        operations_manager: 'skipped',
+        primary_doctor: 'skipped',
+      },
     }
   }
 
@@ -335,19 +373,23 @@ export async function confirmDashboardAppointmentWithDeps(
   }
 
   if (doctor?.phone) {
+    const text = buildAssignedDoctorConfirmationMessage({ patientName, patientPhone, serviceType, appointmentDate, appointmentTime, center })
     try {
-      const sid = await deps.sendTextMessage(
-        doctor.phone,
-        buildAssignedDoctorConfirmationMessage({ patientName, patientPhone, serviceType, appointmentDate, appointmentTime, center }),
-      )
+      const staffSend = await sendStaffWhatsApp(deps, {
+        kind: 'assigned_doctor_confirmation',
+        to: doctor.phone,
+        text,
+        bodyParameters: buildAssignedDoctorConfirmationTemplateParameters({ patientName, patientPhone, serviceType, appointmentDate, appointmentTime, center }),
+      })
       await deps.logNotification({
         patientId: appointment.patient_id,
         appointmentId,
         notificationType: 'staff_booking_alert',
         channel: 'whatsapp',
-        message: `Dashboard assignment alert sent to ${doctor.name ?? 'assigned doctor'}`,
+        message: staffSend.messageContent,
         status: 'sent',
-        externalMessageId: sid,
+        externalMessageId: staffSend.externalMessageId,
+        templateName: staffSend.templateName,
         recipientRole: 'assigned_doctor',
         recipientName: doctor.name ?? 'Assigned doctor',
         recipientPhone: doctor.phone,
@@ -360,9 +402,10 @@ export async function confirmDashboardAppointmentWithDeps(
         appointmentId,
         notificationType: 'staff_booking_alert',
         channel: 'whatsapp',
-        message: `Dashboard assignment alert failed for ${doctor.name ?? 'assigned doctor'}`,
+        message: text,
         status: failure.status,
         errorMessage: failure.message,
+        templateName: 'assigned_doctor_confirmation',
         recipientRole: 'assigned_doctor',
         recipientName: doctor.name ?? 'Assigned doctor',
         recipientPhone: doctor.phone,
@@ -374,28 +417,32 @@ export async function confirmDashboardAppointmentWithDeps(
   }
 
   for (const recipient of deps.getStaffRecipients()) {
+    const text = buildStaffDashboardConfirmationMessage({
+      recipient,
+      patientName,
+      patientPhone,
+      serviceType,
+      appointmentDate,
+      appointmentTime,
+      center,
+      doctorName,
+    })
     try {
-      const sid = await deps.sendTextMessage(
-        recipient.phone,
-        buildStaffDashboardConfirmationMessage({
-          recipient,
-          patientName,
-          patientPhone,
-          serviceType,
-          appointmentDate,
-          appointmentTime,
-          center,
-          doctorName,
-        }),
-      )
+      const staffSend = await sendStaffWhatsApp(deps, {
+        kind: 'dashboard_confirmation',
+        to: recipient.phone,
+        text,
+        bodyParameters: buildDashboardConfirmationTemplateParameters({ patientName, patientPhone, serviceType, appointmentDate, appointmentTime, center, doctorName }),
+      })
       await deps.logNotification({
         patientId: appointment.patient_id,
         appointmentId,
         notificationType: 'staff_booking_alert',
         channel: 'whatsapp',
-        message: `Dashboard confirmation alert sent to ${recipient.name}`,
+        message: staffSend.messageContent,
         status: 'sent',
-        externalMessageId: sid,
+        externalMessageId: staffSend.externalMessageId,
+        templateName: staffSend.templateName,
         recipientRole: recipient.role,
         recipientName: recipient.name,
         recipientPhone: recipient.phone,
@@ -408,9 +455,10 @@ export async function confirmDashboardAppointmentWithDeps(
         appointmentId,
         notificationType: 'staff_booking_alert',
         channel: 'whatsapp',
-        message: `Dashboard confirmation alert failed for ${recipient.name}`,
+        message: text,
         status: failure.status,
         errorMessage: failure.message,
+        templateName: 'dashboard_confirmation',
         recipientRole: recipient.role,
         recipientName: recipient.name,
         recipientPhone: recipient.phone,
@@ -469,6 +517,24 @@ function buildAssignedDoctorConfirmationMessage(params: {
   return `Serenity AI appointment confirmed with you.\n\nPatient: ${params.patientName}\nPhone: ${params.patientPhone || 'Not provided'}\nService: ${params.serviceType}\nDate: ${params.appointmentDate}\nTime: ${params.appointmentTime}\nCenter: ${params.center}\n\nPlease review the dashboard for full details.`
 }
 
+function buildAssignedDoctorConfirmationTemplateParameters(params: {
+  patientName: string
+  patientPhone: string
+  serviceType: string
+  appointmentDate: string
+  appointmentTime: string
+  center: string
+}): string[] {
+  return [
+    params.patientName,
+    params.patientPhone || 'Not provided',
+    params.serviceType,
+    params.appointmentDate,
+    params.appointmentTime,
+    params.center,
+  ]
+}
+
 function buildStaffDashboardConfirmationMessage(params: {
   recipient: StaffRecipient
   patientName: string
@@ -480,4 +546,38 @@ function buildStaffDashboardConfirmationMessage(params: {
   doctorName: string
 }): string {
   return `Serenity AI appointment confirmed from dashboard.\n\n${params.recipient.role === 'operations_manager' ? 'Action complete: appointment has been assigned/confirmed.' : 'For oversight: appointment has been assigned/confirmed by operations.'}\n\nPatient: ${params.patientName}\nPhone: ${params.patientPhone || 'Not provided'}\nService: ${params.serviceType}\nDate: ${params.appointmentDate}\nTime: ${params.appointmentTime}\nCenter: ${params.center}\nDoctor: ${params.doctorName}`
+}
+
+function buildDashboardConfirmationTemplateParameters(params: {
+  patientName: string
+  patientPhone: string
+  serviceType: string
+  appointmentDate: string
+  appointmentTime: string
+  center: string
+  doctorName: string
+}): string[] {
+  return [
+    params.patientName,
+    params.patientPhone || 'Not provided',
+    params.serviceType,
+    params.appointmentDate,
+    params.appointmentTime,
+    params.center,
+    params.doctorName,
+  ]
+}
+
+async function sendStaffWhatsApp(
+  deps: DashboardConfirmationDeps,
+  input: StaffWhatsAppInput,
+): Promise<StaffWhatsAppResult> {
+  if (deps.sendStaffWhatsApp) return deps.sendStaffWhatsApp(input)
+
+  const externalMessageId = await deps.sendTextMessage(input.to, input.text)
+  return {
+    externalMessageId,
+    messageContent: input.text,
+    templateName: `${input.kind}_freeform`,
+  }
 }

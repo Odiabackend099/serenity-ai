@@ -60,16 +60,7 @@ async function sendTwilioWhatsApp(to: string, text: string): Promise<string> {
 }
 
 async function sendMetaWhatsApp(to: string, text: string): Promise<string> {
-  const phoneNumberId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID')
-  const accessToken = Deno.env.get('WHATSAPP_PERMANENT_ACCESS_TOKEN')
-    ?? Deno.env.get('WHATSAPP_API_TOKEN')
-    ?? Deno.env.get('META_WHATSAPP_ACCESS_TOKEN')
-
-  if (!phoneNumberId || !accessToken) {
-    throw new Error('Meta WhatsApp is not configured — set WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_PERMANENT_ACCESS_TOKEN')
-  }
-
-  const apiVersion = Deno.env.get('META_GRAPH_API_VERSION') ?? Deno.env.get('WHATSAPP_API_VERSION') ?? 'v21.0'
+  const { phoneNumberId, accessToken, apiVersion } = getMetaWhatsAppConfig()
   const res = await fetch(`https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`, {
     method: 'POST',
     headers: {
@@ -97,6 +88,65 @@ async function sendMetaWhatsApp(to: string, text: string): Promise<string> {
   return data.messages?.[0]?.id ?? ''
 }
 
+async function sendMetaTemplateMessage(
+  to: string,
+  templateName: string,
+  bodyParameters: string[] = [],
+  languageCode = Deno.env.get('WHATSAPP_TEMPLATE_LANGUAGE') ?? Deno.env.get('META_WHATSAPP_TEMPLATE_LANGUAGE') ?? 'en_US',
+): Promise<string> {
+  const { phoneNumberId, accessToken, apiVersion } = getMetaWhatsAppConfig()
+  const components = bodyParameters.length > 0
+    ? [{
+      type: 'body',
+      parameters: bodyParameters.map((text) => ({
+        type: 'text',
+        text,
+      })),
+    }]
+    : undefined
+
+  const res = await fetch(`https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: normalizeMetaRecipient(to),
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: languageCode },
+        ...(components ? { components } : {}),
+      },
+    }),
+  })
+
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Meta WhatsApp template send failed (${res.status}): ${err}`)
+  }
+
+  const data = await res.json() as { messages?: Array<{ id?: string }> }
+  return data.messages?.[0]?.id ?? ''
+}
+
+function getMetaWhatsAppConfig(): { phoneNumberId: string; accessToken: string; apiVersion: string } {
+  const phoneNumberId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID')
+  const accessToken = Deno.env.get('WHATSAPP_PERMANENT_ACCESS_TOKEN')
+    ?? Deno.env.get('WHATSAPP_API_TOKEN')
+    ?? Deno.env.get('META_WHATSAPP_ACCESS_TOKEN')
+
+  if (!phoneNumberId || !accessToken) {
+    throw new Error('Meta WhatsApp is not configured — set WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_PERMANENT_ACCESS_TOKEN')
+  }
+
+  const apiVersion = Deno.env.get('META_GRAPH_API_VERSION') ?? Deno.env.get('WHATSAPP_API_VERSION') ?? 'v21.0'
+  return { phoneNumberId, accessToken, apiVersion }
+}
+
 /**
  * Send a plain text WhatsApp message through the configured provider.
  */
@@ -104,6 +154,23 @@ export async function sendTextMessage(to: string, text: string): Promise<string>
   return getWhatsAppProvider() === 'meta'
     ? sendMetaWhatsApp(to, text)
     : sendTwilioWhatsApp(to, text)
+}
+
+/**
+ * Send an approved Meta template message. Templates are only supported on the
+ * Meta provider path; Twilio remains available for plain-text backup sends.
+ */
+export async function sendTemplateMessage(
+  to: string,
+  templateName: string,
+  bodyParameters: string[] = [],
+  languageCode?: string,
+): Promise<string> {
+  if (getWhatsAppProvider() !== 'meta') {
+    throw new Error('WhatsApp template sends require WHATSAPP_PROVIDER=meta')
+  }
+
+  return sendMetaTemplateMessage(to, templateName, bodyParameters, languageCode)
 }
 
 /**

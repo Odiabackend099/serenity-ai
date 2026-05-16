@@ -28,6 +28,7 @@ describe('staff-friendly dashboard labels', () => {
 
   it('labels notification and calendar states for staff', () => {
     expect(humanizeNotificationStatus('pending')).toBe('Waiting to send')
+    expect(humanizeNotificationStatus('sent')).toBe('Waiting for delivery')
     expect(humanizeNotificationStatus('synced')).toBe('Saved')
     expect(normalizeNotificationStatus('sent')).toBe('sent')
     expect(normalizeNotificationStatus('queued')).toBe('none')
@@ -56,6 +57,18 @@ describe('staff-friendly dashboard labels', () => {
     expect(detail).toContain('Abdullahi Rahinatu')
     expect(detail).toContain('WhatsApp was not sent')
     expect(detail.toLowerCase()).not.toContain('ops contact')
+  })
+
+  it('explains accepted WhatsApp sends as waiting for phone delivery', () => {
+    const detail = formatNotificationDetail({
+      recipient_name: 'Dr. Adekunle Adesina',
+      recipient_phone: '+2348062197384',
+      status: 'sent',
+      error_message: null,
+    }, 'Dr K update has not been sent yet')
+
+    expect(detail).toContain('Sent to WhatsApp')
+    expect(detail).toContain('Waiting for delivery confirmation')
   })
 
   it('falls back to the provided empty-state message when no notification exists', () => {

@@ -372,6 +372,7 @@ function AppointmentCard({
           {appointment.status === 'confirmed' && !needsDoctorAssignment && (
             <>
               <form action={confirmAppointment.bind(null, appointment.id)}>
+                <input type="hidden" name="intent" value="resend" />
                 <ActionButton tone="secondary">Resend updates</ActionButton>
               </form>
               <details className="rounded-md border border-gray-100 bg-white px-3 py-2">
@@ -472,7 +473,8 @@ function getUpdateSummary(appointment: AppointmentWithRelations, proofItems: Ret
   const notificationItems = proofItems.filter((item) => item.label !== 'Hospital calendar' && item.status !== 'skipped')
   const failed = proofItems.some((item) => item.status === 'failed')
   const pending = notificationItems.some((item) => item.status === 'none' || item.status === 'pending')
-  const delivered = notificationItems.length > 0 && notificationItems.every((item) => ['sent', 'delivered', 'read'].includes(item.status))
+  const waitingForDelivery = notificationItems.some((item) => item.status === 'sent')
+  const delivered = notificationItems.length > 0 && notificationItems.every((item) => ['delivered', 'read'].includes(item.status))
 
   if (appointment.status === 'pending' || (appointment.status === 'confirmed' && !appointment.doctor_id)) {
     return {
@@ -498,10 +500,18 @@ function getUpdateSummary(appointment: AppointmentWithRelations, proofItems: Ret
     }
   }
 
+  if (waitingForDelivery) {
+    return {
+      label: 'Updates sent',
+      detail: 'WhatsApp accepted the updates. Waiting for phone delivery confirmation.',
+      tone: 'amber' as Tone,
+    }
+  }
+
   if (delivered) {
     return {
       label: 'Updates sent',
-      detail: 'Patient and staff updates have been sent.',
+      detail: 'Patient and staff updates have reached WhatsApp phones.',
       tone: 'green' as Tone,
     }
   }
@@ -700,7 +710,7 @@ function InfoTile({ label, value }: { label: string; value: string }) {
 }
 
 function ProofRow({ label, status, detail }: { label: string; status: NotificationStatus; detail: string }) {
-  const tone = status === 'sent' || status === 'delivered' || status === 'read' || status === 'synced'
+  const tone = status === 'delivered' || status === 'read' || status === 'synced'
     ? 'green'
     : status === 'failed'
       ? 'red'
