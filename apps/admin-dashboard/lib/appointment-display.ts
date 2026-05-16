@@ -1,4 +1,5 @@
 export type NotificationStatus = 'pending' | 'synced' | 'sent' | 'delivered' | 'read' | 'failed' | 'skipped' | 'none'
+export type NotificationChannel = 'whatsapp' | 'email' | 'calendar'
 
 export type NotificationLike = {
   status: string | null
@@ -8,10 +9,18 @@ export type NotificationLike = {
 }
 
 export function formatNotificationDetail(notification: NotificationLike | undefined, fallback: string): string {
+  return formatNotificationDetailForChannel(notification, fallback, 'whatsapp')
+}
+
+export function formatNotificationDetailForChannel(
+  notification: NotificationLike | undefined,
+  fallback: string,
+  channel: NotificationChannel,
+): string {
   if (!notification) return fallback
   const recipient = [notification.recipient_name, notification.recipient_phone].filter(Boolean).join(' · ')
   const status = humanizeProviderError(notification.error_message)
-    ?? notificationStatusDetail(notification.status)
+    ?? notificationStatusDetail(notification.status, channel)
   return recipient ? `${recipient}: ${status}` : status
 }
 
@@ -66,8 +75,12 @@ export function humanizeProviderError(error?: string | null): string | null {
 }
 
 export function humanizeNotificationStatus(status?: string | null): string {
+  return humanizeNotificationStatusForChannel(status, 'whatsapp')
+}
+
+export function humanizeNotificationStatusForChannel(status: string | null | undefined, channel: NotificationChannel): string {
   if (status === 'synced') return 'Saved'
-  if (status === 'sent') return 'Waiting for delivery'
+  if (status === 'sent') return channel === 'email' ? 'Sent' : 'Waiting for delivery'
   if (status === 'delivered') return 'Delivered'
   if (status === 'read') return 'Read'
   if (status === 'failed') return 'Failed'
@@ -76,9 +89,10 @@ export function humanizeNotificationStatus(status?: string | null): string {
   return status ?? 'No status'
 }
 
-function notificationStatusDetail(status?: string | null): string {
+function notificationStatusDetail(status: string | null | undefined, channel: NotificationChannel): string {
+  if (status === 'sent' && channel === 'email') return 'Email sent.'
   if (status === 'sent') return 'Sent to WhatsApp. Waiting for delivery confirmation.'
-  return humanizeNotificationStatus(status)
+  return humanizeNotificationStatusForChannel(status, channel)
 }
 
 export function normalizeNotificationStatus(status?: string | null): NotificationStatus {

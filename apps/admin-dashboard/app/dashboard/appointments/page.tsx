@@ -14,10 +14,11 @@ import {
   formatAppointmentReason,
   formatCalendarDetail,
   formatNotificationDetail,
-  humanizeNotificationStatus,
+  formatNotificationDetailForChannel,
+  humanizeNotificationStatusForChannel,
   normalizeNotificationStatus,
 } from '@/lib/appointment-display'
-import type { NotificationStatus } from '@/lib/appointment-display'
+import type { NotificationChannel, NotificationStatus } from '@/lib/appointment-display'
 
 type View = 'upcoming' | 'pending' | 'confirmed' | 'whatsapp' | 'calendar' | 'past' | 'all'
 type AppointmentStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
@@ -32,6 +33,13 @@ type NotificationRow = {
   recipient_name: string | null
   recipient_phone: string | null
   created_at: string
+}
+
+type ProofItem = {
+  label: string
+  status: NotificationStatus
+  detail: string
+  channel: NotificationChannel
 }
 
 type AppointmentWithRelations = {
@@ -462,12 +470,13 @@ function notificationProofItems(
     assignedDoctorWhatsapp?: NotificationRow
     email?: NotificationRow
   },
-) {
+): ProofItem[] {
   const patient = appointment.patients
   const emailStatus: NotificationStatus = notifications.email ? normalizeNotificationStatus(notifications.email.status) : patient?.email ? 'none' : 'skipped'
-  const calendarItem = {
+  const calendarItem: ProofItem = {
     label: 'Hospital calendar',
     status: calendarStatus(appointment.calendar_sync_status),
+    channel: 'calendar',
     detail: formatCalendarDetail(appointment.calendar_sync_status, appointment.calendar_sync_error),
   }
 
@@ -477,11 +486,13 @@ function notificationProofItems(
       {
         label: 'Secretary',
         status: normalizeNotificationStatus(notifications.operationsWhatsapp?.status),
+        channel: 'whatsapp',
         detail: formatNotificationDetail(notifications.operationsWhatsapp, 'Booking request has not reached the secretary yet'),
       },
       {
         label: 'Dr K',
         status: normalizeNotificationStatus(notifications.primaryDoctorWhatsapp?.status),
+        channel: 'whatsapp',
         detail: formatNotificationDetail(notifications.primaryDoctorWhatsapp, 'Booking request has not reached Dr K yet'),
       },
     ]
@@ -492,38 +503,46 @@ function notificationProofItems(
     {
       label: 'Patient',
       status: normalizeNotificationStatus(notifications.patientWhatsapp?.status),
+      channel: 'whatsapp',
       detail: formatNotificationDetail(notifications.patientWhatsapp, 'Patient update has not been sent yet'),
     },
     {
       label: 'Secretary',
       status: normalizeNotificationStatus(notifications.operationsWhatsapp?.status),
+      channel: 'whatsapp',
       detail: formatNotificationDetail(notifications.operationsWhatsapp, 'Secretary update has not been sent yet'),
     },
     {
       label: 'Dr K',
       status: normalizeNotificationStatus(notifications.primaryDoctorWhatsapp?.status),
+      channel: 'whatsapp',
       detail: formatNotificationDetail(notifications.primaryDoctorWhatsapp, 'Dr K update has not been sent yet'),
     },
     {
       label: 'Doctor',
       status: notifications.assignedDoctorWhatsapp ? normalizeNotificationStatus(notifications.assignedDoctorWhatsapp.status) : appointment.doctor_id ? 'none' as NotificationStatus : 'skipped' as NotificationStatus,
+      channel: 'whatsapp',
       detail: formatNotificationDetail(notifications.assignedDoctorWhatsapp, appointment.doctor_id ? 'Doctor update has not been sent yet' : 'Doctor not assigned yet'),
     },
     {
       label: 'Email',
       status: emailStatus,
-      detail: formatNotificationDetail(notifications.email, patient?.email ? 'Email has not been sent yet' : 'Patient email not provided'),
+      channel: 'email',
+      detail: formatNotificationDetailForChannel(notifications.email, patient?.email ? 'Email has not been sent yet' : 'Patient email not provided', 'email'),
     },
   ]
 }
 
-function getUpdateSummary(appointment: AppointmentWithRelations, proofItems: ReturnType<typeof notificationProofItems>) {
+function getUpdateSummary(appointment: AppointmentWithRelations, proofItems: ProofItem[]) {
   const calendar = proofItems.find((item) => item.label === 'Hospital calendar')
   const notificationItems = proofItems.filter((item) => item.label !== 'Hospital calendar' && item.status !== 'skipped')
   const failed = proofItems.some((item) => item.status === 'failed')
   const pending = notificationItems.some((item) => item.status === 'none' || item.status === 'pending')
-  const waitingForDelivery = notificationItems.some((item) => item.status === 'sent')
-  const delivered = notificationItems.length > 0 && notificationItems.every((item) => ['delivered', 'read'].includes(item.status))
+  const waitingForDelivery = notificationItems.some((item) => item.status === 'sent' && item.channel !== 'email')
+  const delivered = notificationItems.length > 0 && notificationItems.every((item) => {
+    if (item.channel === 'email') return ['sent', 'delivered', 'read'].includes(item.status)
+    return ['delivered', 'read'].includes(item.status)
+  })
 
   if (appointment.status === 'pending' || (appointment.status === 'confirmed' && !appointment.doctor_id)) {
     return {
@@ -768,15 +787,16 @@ function InfoTile({ label, value }: { label: string; value: string }) {
   )
 }
 
-function ProofRow({ label, status, detail }: { label: string; status: NotificationStatus; detail: string }) {
+function ProofRow({ label, status, detail, channel }: ProofItem) {
   const tone = status === 'delivered' || status === 'read' || status === 'synced'
+    || (channel === 'email' && status === 'sent')
     ? 'green'
     : status === 'failed'
       ? 'red'
       : status === 'skipped'
         ? 'gray'
         : 'amber'
-  const value = status === 'none' ? 'Not sent yet' : humanizeNotificationStatus(status)
+  const value = status === 'none' ? 'Not sent yet' : humanizeNotificationStatusForChannel(status, channel)
 
   return (
     <div title={detail} className={`rounded-md border px-2.5 py-2 ${toneClasses(tone).soft}`}>

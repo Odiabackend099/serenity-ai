@@ -4,8 +4,10 @@ import {
   formatAppointmentReason,
   formatCalendarDetail,
   formatNotificationDetail,
+  formatNotificationDetailForChannel,
   humanizeProviderError,
   humanizeNotificationStatus,
+  humanizeNotificationStatusForChannel,
   normalizeNotificationStatus,
   staffNotificationLabel,
 } from './appointment-display'
@@ -69,6 +71,19 @@ describe('staff-friendly dashboard labels', () => {
 
     expect(detail).toContain('Sent to WhatsApp')
     expect(detail).toContain('Waiting for delivery confirmation')
+  })
+
+  it('shows accepted email sends as sent because email delivery webhooks are not tracked', () => {
+    expect(humanizeNotificationStatusForChannel('sent', 'email')).toBe('Sent')
+    const detail = formatNotificationDetailForChannel({
+      recipient_name: 'Nwosu Donald',
+      recipient_phone: null,
+      status: 'sent',
+      error_message: null,
+    }, 'Email has not been sent yet', 'email')
+
+    expect(detail).toBe('Nwosu Donald: Email sent.')
+    expect(detail).not.toContain('Waiting for delivery')
   })
 
   it('falls back to the provided empty-state message when no notification exists', () => {
