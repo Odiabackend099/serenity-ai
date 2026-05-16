@@ -71,7 +71,7 @@ Passwords are intentionally not stored here.
 
 ## Dashboard Action QA Gate
 
-Use the maintained checklist in `docs/DASHBOARD_ACTION_INVENTORY.md`.
+Use the maintained checklist in `docs/qa/DASHBOARD_ACTION_INVENTORY.md`.
 
 Run before shipping dashboard changes:
 
