@@ -47,6 +47,7 @@ type AppointmentWithRelations = {
   calendar_sync_error: string | null
   reminder_1week_sent: boolean
   reminder_24h_sent: boolean
+  reminder_2h_sent: boolean
   confirmation_sent: boolean | null
   patients: { id?: string; name?: string; phone_number?: string; email?: string | null } | null
   doctors: { name?: string; speciality?: string } | null
@@ -386,6 +387,11 @@ function AppointmentCard({
                       <ActionButton tone="secondary">Send 24-hour reminder</ActionButton>
                     </form>
                   )}
+                  {canRemind && !appointment.reminder_2h_sent && (
+                    <form action={sendManualReminder.bind(null, appointment.id, '2h')}>
+                      <ActionButton tone="secondary">Send 2-hour reminder</ActionButton>
+                    </form>
+                  )}
                   <form action={updateAppointmentStatus.bind(null, appointment.id, 'completed')}>
                     <ActionButton tone="secondary">Mark completed</ActionButton>
                   </form>
@@ -595,9 +601,59 @@ function NoticeBanner({ notice }: { notice?: string }) {
       detail: 'The patient reminder was sent.',
       tone: 'green',
     },
+    'reminder-1week-sent': {
+      title: '1-week reminder sent',
+      detail: 'The patient reminder was sent and saved.',
+      tone: 'green',
+    },
+    'reminder-24h-sent': {
+      title: '24-hour reminder sent',
+      detail: 'The patient reminder was sent and saved.',
+      tone: 'green',
+    },
+    'reminder-2h-sent': {
+      title: '2-hour reminder sent',
+      detail: 'The patient reminder was sent and saved.',
+      tone: 'green',
+    },
+    'reminder-not-confirmed': {
+      title: 'Confirm the booking first',
+      detail: 'Reminders can only be sent after a doctor is assigned and the booking is confirmed.',
+      tone: 'amber',
+    },
+    'reminder-past': {
+      title: 'Reminder not sent',
+      detail: 'This booking time has passed, so a patient reminder was not sent.',
+      tone: 'amber',
+    },
+    'reminder-unavailable': {
+      title: 'Reminder not sent',
+      detail: 'The reminder service is not available. Ask a manager to check deployment, then resend.',
+      tone: 'red',
+    },
+    'reminder-failed': {
+      title: 'Reminder needs resend',
+      detail: 'The booking is still saved, but WhatsApp did not accept the reminder. Try sending it again.',
+      tone: 'amber',
+    },
     'missing-phone': {
       title: 'Patient phone number missing',
       detail: 'Add a patient phone number before sending updates.',
+      tone: 'amber',
+    },
+    'not-found': {
+      title: 'Booking not found',
+      detail: 'This booking may have been moved or removed. Refresh the bookings list.',
+      tone: 'red',
+    },
+    'not-authorized': {
+      title: 'Action not available',
+      detail: 'Your staff account does not have permission to make this change.',
+      tone: 'red',
+    },
+    'not-signed-in': {
+      title: 'Please sign in again',
+      detail: 'Your session ended before the change was saved.',
       tone: 'amber',
     },
     'could-not-save': {

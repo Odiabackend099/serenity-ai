@@ -55,17 +55,40 @@ export async function upsertPatient(
   phoneNumber: string,
   name?: string,
 ): Promise<{ id: string; phone_number: string; consent_ndpr: boolean; name: string | null }> {
-  const { data: existing } = await supabase
+  const normalizedPhone = normalizePatientPhoneNumber(phoneNumber)
+  const phoneVariants = patientPhoneVariants(phoneNumber)
+
+  const { data: existingMatches, error: existingError } = await supabase
     .from('patients')
-    .select('id, phone_number, consent_ndpr, name')
-    .eq('phone_number', phoneNumber)
-    .single()
+    .select('id, phone_number, consent_ndpr, name, created_at')
+    .in('phone_number', phoneVariants)
+    .order('created_at', { ascending: true })
+    .limit(10)
+
+  if (existingError) {
+    throw new Error(`Failed to load patient by phone number: ${existingError.message}`)
+  }
+
+  const existing = (existingMatches ?? [])[0] ?? null
 
   if (existing) {
     // Update name if we now know it and didn't before
+    const updates: Record<string, string> = {}
     if (name && !existing.name) {
-      await supabase.from('patients').update({ name }).eq('id', existing.id)
-      return { ...existing, name }
+      updates.name = name
+    }
+    if (existing.phone_number !== normalizedPhone && !hasConflictingPhoneRecord(existingMatches ?? [], existing.id, normalizedPhone)) {
+      updates.phone_number = normalizedPhone
+    }
+    if (Object.keys(updates).length > 0) {
+      const { error } = await supabase.from('patients').update(updates).eq('id', existing.id)
+      if (error) throw new Error(`Failed to update patient: ${error.message}`)
+      return {
+        id: existing.id,
+        phone_number: updates.phone_number ?? existing.phone_number,
+        consent_ndpr: existing.consent_ndpr,
+        name: updates.name ?? existing.name,
+      }
     }
     return existing
   }
@@ -73,7 +96,7 @@ export async function upsertPatient(
   const { data: created, error } = await supabase
     .from('patients')
     .insert({
-      phone_number: phoneNumber,
+      phone_number: normalizedPhone,
       name: name ?? null,
       consent_ndpr: false,
     })
@@ -85,6 +108,24 @@ export async function upsertPatient(
   }
 
   return created
+}
+
+function normalizePatientPhoneNumber(phoneNumber: string): string {
+  const digits = phoneNumber.replace(/\D/g, '')
+  return digits ? `+${digits}` : phoneNumber.trim()
+}
+
+function patientPhoneVariants(phoneNumber: string): string[] {
+  const digits = phoneNumber.replace(/\D/g, '')
+  return [...new Set([phoneNumber.trim(), digits, digits ? `+${digits}` : ''].filter(Boolean))]
+}
+
+function hasConflictingPhoneRecord(
+  matches: Array<{ id: string; phone_number: string }>,
+  currentPatientId: string,
+  normalizedPhone: string,
+): boolean {
+  return matches.some((patient) => patient.id !== currentPatientId && patient.phone_number === normalizedPhone)
 }
 
 /**

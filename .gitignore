@@ -10,5 +10,7 @@ build/
 .vercel
 .env*.local
 .playwright-cli/
+output/playwright/
+.turbo/
 *.tsbuildinfo
 supabase/.temp/

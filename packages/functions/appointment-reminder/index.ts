@@ -10,8 +10,8 @@
  * - Feedback: send feedback request for appointments completed yesterday
  * - Daily list: email MD the full schedule for today
  *
- * Uses Twilio WhatsApp body messages for MVP reminders.
- * Production business-initiated campaigns may need approved Twilio Content messages.
+ * Uses the configured WhatsApp provider for reminder delivery.
+ * Production business-initiated campaigns may need approved template messages.
  */
 
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
@@ -19,9 +19,14 @@ import { getSupabaseClient, isAuthorizedInternalRequest, trackApiUsage } from '.
 import {
   sendAppointmentReminder1Week,
   sendAppointmentReminder24h,
+  sendAppointmentReminder2h,
   sendFeedbackRequest,
 } from '../_shared/whatsapp.ts'
 import { sendDailyAppointmentList } from '../_shared/email.ts'
+import {
+  reminderNotificationType,
+  validateManualReminderBody,
+} from '../_shared/appointment-reminder-contract.ts'
 import { format, addDays, subDays } from 'https://esm.sh/date-fns@3'
 
 serve(async (req: Request) => {
@@ -45,20 +50,17 @@ serve(async (req: Request) => {
   }
 
   if (body.manual === true) {
-    const { appointmentId, reminderType, phone, patientName, appointmentDate, appointmentTime, center, doctorName } = body as {
-      appointmentId: string
-      reminderType: '24h' | '1week'
-      phone: string
-      patientName: string
-      appointmentDate: string
-      appointmentTime: string
-      center: string
-      doctorName: string
+    const validation = validateManualReminderBody(body)
+
+    if (!validation.ok) {
+      return Response.json({
+        sent: false,
+        error: validation.error,
+        allowedReminderTypes: validation.allowedReminderTypes,
+      }, { status: 400 })
     }
 
-    if (!phone || !reminderType) {
-      return Response.json({ error: 'phone and reminderType are required for manual reminders' }, { status: 400 })
-    }
+    const { appointmentId, reminderType, phone, patientName, appointmentDate, appointmentTime, center, doctorName } = validation.value
 
     try {
       const formattedDate = format(new Date(appointmentDate + 'T00:00:00'), 'EEEE, MMMM d, yyyy')
@@ -72,8 +74,16 @@ serve(async (req: Request) => {
           center ?? 'Galadimawa',
           doctorName ?? 'Dr. Kunle Adesina',
         )
-      } else {
+      } else if (reminderType === '24h') {
         await sendAppointmentReminder24h(
+          phone,
+          patientName ?? 'Patient',
+          formattedDate,
+          appointmentTime ?? '09:00',
+          center ?? 'Galadimawa',
+        )
+      } else {
+        await sendAppointmentReminder2h(
           phone,
           patientName ?? 'Patient',
           formattedDate,
@@ -83,10 +93,20 @@ serve(async (req: Request) => {
       }
 
       console.log(`[appointment-reminder] Manual ${reminderType} reminder sent for appointment ${appointmentId}`)
-      return Response.json({ sent: true, reminderType, appointmentId })
+      return Response.json({
+        sent: true,
+        reminderType,
+        appointmentId,
+        notificationType: reminderNotificationType(reminderType),
+      })
     } catch (err) {
       console.error(`[appointment-reminder] Manual ${reminderType} reminder failed:`, (err as Error).message)
-      return Response.json({ error: (err as Error).message }, { status: 500 })
+      return Response.json({
+        sent: false,
+        reminderType,
+        appointmentId,
+        error: (err as Error).message,
+      }, { status: 500 })
     }
   }
 
@@ -132,7 +152,11 @@ serve(async (req: Request) => {
 
       await supabase
         .from('appointments')
-        .update({ reminder_1week_sent: true })
+        .update({
+          reminder_1week_sent: true,
+          reminder_1week_sent_at: new Date().toISOString(),
+          reminder_1week_status: 'sent',
+        })
         .eq('id', appt.id)
 
       results.weekReminders++
@@ -177,7 +201,11 @@ serve(async (req: Request) => {
 
       await supabase
         .from('appointments')
-        .update({ reminder_24h_sent: true })
+        .update({
+          reminder_24h_sent: true,
+          reminder_24h_sent_at: new Date().toISOString(),
+          reminder_24h_status: 'sent',
+        })
         .eq('id', appt.id)
 
       results.dayReminders++

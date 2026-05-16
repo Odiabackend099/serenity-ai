@@ -18,7 +18,7 @@ export default async function PatientDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ convPage?: string; tab?: string }>
+  searchParams: Promise<{ convPage?: string; tab?: string; notice?: string }>
 }) {
   const supabase = await createServerSupabaseClient()
   const [resolvedParams, resolvedSearchParams] = await Promise.all([params, searchParams])
@@ -66,6 +66,8 @@ export default async function PatientDetailPage({
       <Link href="/dashboard/patients" className="inline-flex items-center gap-1 text-sm text-serenity-600 hover:underline mb-5">
         ← Back to Patients
       </Link>
+
+      <PatientNoticeBanner notice={resolvedSearchParams.notice} />
 
       {/* ── Patient Header ── */}
       <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
@@ -494,4 +496,36 @@ function appointmentStatusLabel(status: string | null): string {
     default:
       return 'Saved'
   }
+}
+
+function PatientNoticeBanner({ notice }: { notice?: string }) {
+  if (!notice) return null
+
+  const messages: Record<string, { title: string; detail: string; tone: 'green' | 'amber' | 'red' }> = {
+    'patient-updated': { title: 'Patient details saved', detail: 'The patient record was updated.', tone: 'green' },
+    'message-sent': { title: 'WhatsApp message sent', detail: 'The patient message was sent and added to the conversation.', tone: 'green' },
+    'message-empty': { title: 'Message needed', detail: 'Type a message before sending.', tone: 'amber' },
+    'message-unavailable': { title: 'Message not sent', detail: 'The WhatsApp update service is not available right now.', tone: 'red' },
+    'message-failed': { title: 'Message needs resend', detail: 'WhatsApp did not accept the message. Check the phone number and try again.', tone: 'amber' },
+    'missing-phone': { title: 'Patient phone number missing', detail: 'Add a phone number before sending a WhatsApp message.', tone: 'amber' },
+    'deletion-requested': { title: 'Deletion request saved', detail: 'The patient is now marked for data deletion review.', tone: 'green' },
+    'not-authorized': { title: 'Action not available', detail: 'Your staff account does not have permission to make this change.', tone: 'red' },
+    'not-signed-in': { title: 'Please sign in again', detail: 'Your session ended before the change was saved.', tone: 'amber' },
+    'could-not-save': { title: 'Could not save that change', detail: 'Please try again. If it repeats, ask a manager to review.', tone: 'red' },
+  }
+  const message = messages[notice]
+  if (!message) return null
+
+  const className = message.tone === 'green'
+    ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
+    : message.tone === 'red'
+      ? 'border-red-100 bg-red-50 text-red-700'
+      : 'border-amber-100 bg-amber-50 text-amber-700'
+
+  return (
+    <div className={`mb-5 rounded-md border px-4 py-3 ${className}`}>
+      <p className="text-sm font-semibold">{message.title}</p>
+      <p className="mt-0.5 text-xs opacity-80">{message.detail}</p>
+    </div>
+  )
 }

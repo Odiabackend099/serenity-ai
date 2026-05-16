@@ -1,13 +1,34 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { redirect } from 'next/navigation'
+import { callInternalEdgeFunction } from '@/lib/edge-functions'
+import { DashboardActionError, requireDashboardUser, type DashboardRole } from '@/lib/dashboard-action-auth'
+
+const PATIENT_EDIT_ROLES: DashboardRole[] = ['super_admin', 'admin', 'doctor', 'nurse', 'staff']
+const PATIENT_DELETION_ROLES: DashboardRole[] = ['super_admin', 'admin', 'dpo']
+
+function patientNoticeUrl(patientId: string, notice: string): string {
+  return `/dashboard/patients/${encodeURIComponent(patientId)}?notice=${encodeURIComponent(notice)}`
+}
+
+async function requirePatientActionUser(patientId: string, allowedRoles: DashboardRole[]) {
+  try {
+    return await requireDashboardUser(allowedRoles)
+  } catch (err) {
+    if (err instanceof DashboardActionError) {
+      console.error(`[patients] action blocked (${err.code}):`, err.message)
+      redirect(patientNoticeUrl(patientId, err.code === 'not_authenticated' ? 'not-signed-in' : 'not-authorized'))
+    }
+    throw err
+  }
+}
 
 export async function updatePatient(
   patientId: string,
   formData: FormData,
 ): Promise<void> {
-  const supabase = await createServerSupabaseClient()
+  const { supabase } = await requirePatientActionUser(patientId, PATIENT_EDIT_ROLES)
 
   const name = (formData.get('name') as string)?.trim() || null
   const email = (formData.get('email') as string)?.trim() || null
@@ -22,21 +43,22 @@ export async function updatePatient(
 
   if (error) {
     console.error('[patients] update failed:', error.message)
-    return
+    redirect(patientNoticeUrl(patientId, 'could-not-save'))
   }
 
   revalidatePath(`/dashboard/patients/${patientId}`)
   revalidatePath('/dashboard/patients')
+  redirect(patientNoticeUrl(patientId, 'patient-updated'))
 }
 
 export async function sendManualMessage(
   patientId: string,
   formData: FormData,
 ): Promise<void> {
-  const supabase = await createServerSupabaseClient()
+  const { supabase } = await requirePatientActionUser(patientId, PATIENT_EDIT_ROLES)
 
   const message = (formData.get('message') as string)?.trim()
-  if (!message) return
+  if (!message) redirect(patientNoticeUrl(patientId, 'message-empty'))
 
   // Get patient phone number
   const { data: patient } = await supabase
@@ -45,36 +67,25 @@ export async function sendManualMessage(
     .eq('id', patientId)
     .single()
 
-  if (!patient?.phone_number) return
+  if (!patient?.phone_number) redirect(patientNoticeUrl(patientId, 'missing-phone'))
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const phone = patient.phone_number.replace(/[^\d]/g, '')
 
-  if (!supabaseUrl || !serviceKey) return
-
-  const phone = patient.phone_number.replace('+', '')
-
-  const res = await fetch(`${supabaseUrl}/functions/v1/send-notification`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${serviceKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      type: 'manual_message',
-      phone,
-      message,
-    }),
+  const res = await callInternalEdgeFunction('send-notification', {
+    type: 'manual_message',
+    phone,
+    message,
   })
 
+  if (!res) redirect(patientNoticeUrl(patientId, 'message-unavailable'))
+
   if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    console.error(`[patients] manual message failed${body ? `: ${body}` : ''}`)
-    return
+    console.error(`[patients] manual message failed${res.errorText ? `: ${res.errorText}` : ''}`)
+    redirect(patientNoticeUrl(patientId, 'message-failed'))
   }
 
   // Log the outbound message as a conversation record
-  await supabase.from('conversations').insert({
+  const { error: logError } = await supabase.from('conversations').insert({
     patient_id: patientId,
     message_type: 'text',
     patient_message: null,
@@ -83,14 +94,19 @@ export async function sendManualMessage(
     has_emergency_keywords: false,
   })
 
+  if (logError) {
+    console.error('[patients] manual message conversation log failed:', logError.message)
+  }
+
   revalidatePath(`/dashboard/patients/${patientId}`)
+  redirect(patientNoticeUrl(patientId, 'message-sent'))
 }
 
 export async function requestPatientDeletion(
   patientId: string,
   reason: string,
 ): Promise<void> {
-  const supabase = await createServerSupabaseClient()
+  const { supabase } = await requirePatientActionUser(patientId, PATIENT_DELETION_ROLES)
 
   const { error } = await supabase.from('deletion_requests').insert({
     patient_id: patientId,
@@ -101,8 +117,9 @@ export async function requestPatientDeletion(
 
   if (error) {
     console.error('[patients] deletion request failed:', error.message)
-    return
+    redirect(patientNoticeUrl(patientId, 'could-not-save'))
   }
 
   revalidatePath(`/dashboard/patients/${patientId}`)
+  redirect(patientNoticeUrl(patientId, 'deletion-requested'))
 }

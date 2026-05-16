@@ -54,6 +54,18 @@ import {
   createAppointmentEvent,
   isCalendarConfigured,
 } from '../_shared/calendar.ts'
+import {
+  DEFAULT_APPOINTMENT_DURATION_MINUTES,
+  SLOT_HOLD_MINUTES,
+  checkAppointmentAvailability,
+  formatSuggestedSlot,
+  isNonBlockingAppointmentStatus,
+  type AppointmentAvailabilityResult,
+  type AvailabilityDoctor,
+  type BusyAppointment,
+  type BusySlotHold,
+  type SuggestedSlot,
+} from '../_shared/appointment-availability.ts'
 import type {
   AIMessage,
   BookingSessionRow,
@@ -61,6 +73,65 @@ import type {
   PatientRow,
 } from '../_shared/types.ts'
 import { BOOKING_STEPS } from '../_shared/types.ts'
+import {
+  addDays,
+  buildAdminHelpResponse,
+  buildAppointmentStatusReply,
+  buildBookingSummary,
+  buildPatientMemoryPrompt,
+  buildWelcomeBackGreeting,
+  doctorServesCenter,
+  formatAppointmentForPatient,
+  formatDisplayDate,
+  getAppointmentDoctorName,
+  getPatientGreetingName,
+  getServicePrompt,
+  isAdminHelpIntent,
+  isAdminInstruction,
+  isAnyDoctorPreference,
+  isAppointmentStatusIntent,
+  isBookAppointmentIntentWithExistingAppointment,
+  isCancelAppointmentConfirmation,
+  isCancelAppointmentIntent,
+  isCancelBooking,
+  isDoctorStatusIntent,
+  isKeepAppointmentIntent,
+  isCurrentOrUpcomingAppointment,
+  isKnownPatient,
+  isPhoneAuthorizedForAdminCommand,
+  isRescheduleIntent,
+  isReturningPatientMemoryIntent,
+  isSimpleGreeting,
+  isSimpleYes,
+  isSpeakToTeamIntent,
+  matchPreferredDoctor,
+  normalizeCenter,
+  normalizeDoctorMatchText,
+  normalizeServiceType,
+  normalizeWhitespace,
+  parseAppointmentDate,
+  parseAppointmentTime,
+  parseCenter,
+  parseConfirmation,
+  parseDoctorPreference,
+  parseFullName,
+  parseLocation,
+  parseOptionalEmail,
+  parseServiceType,
+  parseSex,
+  shouldAssignDoctorDuringBooking,
+  todayInLagos,
+  toIsoDate,
+  wasLastAssistantCancelPrompt,
+  wasLastAssistantReschedulePrompt,
+} from '../_shared/mvp-logic.ts'
+import type {
+  AppointmentMemoryRow,
+  DoctorContact,
+  EmergencyMemoryRow,
+  PatientContext,
+  PatientMemoryContext,
+} from '../_shared/mvp-logic.ts'
 
 const BATCH_SIZE = 5
 const MAX_RETRY_COUNT = 3
@@ -81,26 +152,20 @@ type BookingResult = {
   sentiment?: 'positive' | 'neutral' | 'distressed' | 'crisis' | null
 }
 
+type FinalizeBookingResult = {
+  response: string
+  completed: boolean
+  sentiment: 'positive' | 'neutral'
+}
+
 type TemplateResult = {
   response: string
   sentiment: 'positive' | 'neutral' | 'distressed' | 'crisis' | null
   label: string
 }
 
-type ValidationResult<T> = {
-  value: T | null
-  error: string | null
-}
-
 type AssistantRequestBody = {
   queueItemId?: string
-}
-
-type DoctorContact = {
-  id: string
-  name: string
-  phone: string | null
-  location?: string | null
 }
 
 type StaffNotificationRecipient = {
@@ -109,35 +174,6 @@ type StaffNotificationRecipient = {
   phone: string
 }
 
-type PatientContext = Pick<PatientRow, 'id' | 'phone_number' | 'name' | 'email' | 'gender' | 'location' | 'consent_ndpr' | 'consent_date' | 'created_at' | 'updated_at'>
-
-type AppointmentMemoryRow = {
-  id: string
-  appointment_date: string
-  appointment_time: string | null
-  center: string | null
-  service_type: string | null
-  reason: string | null
-  status: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show' | 'rescheduled'
-  created_at: string
-  created_from_whatsapp?: boolean | null
-  doctors?: { name?: string | null } | null
-}
-
-type EmergencyMemoryRow = {
-  id: string
-  alert_type: string | null
-  severity: string | null
-  created_at: string
-}
-
-type PatientMemoryContext = {
-  patient: PatientContext
-  latestAppointment: AppointmentMemoryRow | null
-  latestCompletedBooking: BookingSessionRow | null
-  recentConversation: AIMessage[]
-  unresolvedEmergency: EmergencyMemoryRow | null
-}
 
 type AdminDateRange = {
   label: string
@@ -664,67 +700,15 @@ async function handleAdminWhatsAppCommand(
   }
 }
 
-function isAdminInstruction(message: string): boolean {
-  return matchesAny(message, [
-    'admin',
-    'booked today',
-    'bookings today',
-    'appointment summary',
-    'appointments today',
-    'appointments tomorrow',
-    'appointments next week',
-    'appointments next month',
-    'patients due',
-    'remind all patients',
-    'send reminder',
-    'follow up patients',
-    'patient follow up',
-    'follow up reminder',
-    'followup reminder',
-    'open emergencies',
-    'emergency summary',
-    'urgent summary',
-    'operations summary',
-    'daily summary',
-  ])
-}
-
-function isAdminHelpIntent(message: string): boolean {
-  return matchesAny(message, ['admin help', 'boss help', 'what can you do', 'commands', 'command list'])
-}
-
-function buildAdminHelpResponse(): string {
-  return `Yes boss. I can help with Serenity operations on WhatsApp.
-
-Try:
-• "Summary of bookings today"
-• "Appointments tomorrow"
-• "Appointments next week"
-• "Remind patients tomorrow"
-• "Remind patients next week"
-• "Emergency summary"
-
-For safety, I only accept these admin commands from Dr K and the operations secretary.`
-}
-
 function isAuthorizedAdminPhone(phoneNumber: string): boolean {
-  const configured = [
+  return isPhoneAuthorizedForAdminCommand(phoneNumber, [
     Deno.env.get('PRIMARY_DOCTOR_WHATSAPP') ?? '+2348062197384',
     Deno.env.get('OPERATIONS_MANAGER_WHATSAPP') ?? '+2348072023652',
     Deno.env.get('HOSPITAL_MD_WHATSAPP'),
     Deno.env.get('HOSPITAL_MD_PHONE'),
     Deno.env.get('STAFF_BOOKING_WHATSAPP_TO'),
     ...(Deno.env.get('ADMIN_COMMAND_WHATSAPP_NUMBERS') ?? '').split(','),
-  ]
-    .filter((phone): phone is string => Boolean(phone?.trim()))
-    .map(normalizePhoneDigits)
-
-  const inbound = normalizePhoneDigits(phoneNumber)
-  return configured.some((phone) => phone === inbound)
-}
-
-function normalizePhoneDigits(phone: string): string {
-  return phone.replace(/\D/g, '')
+  ])
 }
 
 function parseAdminDateRange(message: string): AdminDateRange {
@@ -1022,7 +1006,23 @@ async function handleReturningPatientMemory(
   if (!lower) return null
 
   const appointment = context.latestAppointment
-  const hasActiveAppointment = appointment ? isActiveAppointmentStatus(appointment.status) : false
+  const hasActiveAppointment = appointment ? isCurrentOrUpcomingAppointment(appointment, todayInLagos()) : false
+  const hasVerifiedPatientContext = isKnownPatient(context.patient) ||
+    Boolean(context.latestAppointment) ||
+    Boolean(context.latestCompletedBooking) ||
+    context.recentConversation.length > 0
+
+  if (isReturningPatientMemoryIntent(lower)) {
+    const greetingName = getPatientGreetingName(context.patient.name)
+    const intro = greetingName ? `Yes, ${greetingName}.` : 'Yes.'
+    return {
+      label: 'returning_patient_memory_confirmation',
+      sentiment: 'positive',
+      response: hasVerifiedPatientContext
+        ? `${intro} I can see the details you have already shared with Serenity, so you do not need to start from scratch each time. ${appointment ? 'I can also check your latest appointment update whenever you need it.' : 'If anything has changed, just tell me and I will update it.'}`
+        : 'I can use any details already saved in your Serenity record and this chat. If I do not have something yet, I will ask for it and keep things simple.',
+    }
+  }
 
   if (hasActiveAppointment && appointment && wasLastAssistantReschedulePrompt(context)) {
     const parsedDate = parseAppointmentDate(message)
@@ -1031,7 +1031,7 @@ async function handleReturningPatientMemory(
       return {
         label: 'appointment_reschedule_retry',
         sentiment: 'neutral',
-        response: `Please send both the new date and time in one message. For example: "Monday 10am" or "2026-06-17 14:30".\n\nYour current appointment is still saved until the secretary confirms a change.`,
+        response: `Please send both the new date and time in one message. For example: "Monday 10am" or "2026-06-17 14:30".\n\nYour current appointment is still saved while our team reviews the change.`,
       }
     }
 
@@ -1053,7 +1053,7 @@ async function handleReturningPatientMemory(
     return {
       label: 'appointment_reschedule_saved',
       sentiment: 'neutral',
-      response: `Your reschedule request has been saved for secretary confirmation.\n\nService: ${appointment.service_type ?? 'Consultation'}\nNew date: ${formatDisplayDate(parsedDate.value!)}\nNew time: ${parsedTime.value!.slice(0, 5)}\nCenter: ${appointment.center ?? 'Not selected'}\nDoctor: ${getAppointmentDoctorName(appointment) ?? 'Doctor not assigned yet'}\n\nOur team will confirm the final slot shortly.`,
+      response: `Your reschedule request has been received.\n\nService: ${appointment.service_type ?? 'Consultation'}\nNew date: ${formatDisplayDate(parsedDate.value!)}\nNew time: ${parsedTime.value!.slice(0, 5)}\nCenter: ${appointment.center ?? 'Not selected'}\nDoctor: ${getAppointmentDoctorName(appointment) ?? 'Doctor not assigned yet'}\n\nOur team will confirm the final slot shortly.`,
     }
   }
 
@@ -1105,7 +1105,7 @@ async function handleReturningPatientMemory(
     return {
       label: 'appointment_reschedule_request',
       sentiment: 'neutral',
-      response: `I can help you request a change. Your current appointment is:\n\n${formatAppointmentForPatient(appointment)}\n\nPlease send your preferred new date and time. The secretary will review availability and confirm the final slot.`,
+      response: `I can help you request a change. Your current appointment is:\n\n${formatAppointmentForPatient(appointment)}\n\nPlease send your preferred new date and time. Our team will review availability and confirm the final slot.`,
     }
   }
 
@@ -1124,7 +1124,7 @@ async function handleReturningPatientMemory(
       sentiment: 'neutral',
       response: doctorName
         ? `Your doctor is ${doctorName}.\n\n${formatAppointmentForPatient(appointment)}`
-        : `A doctor has not been assigned yet. Your request is saved for secretary review.\n\n${formatAppointmentForPatient(appointment)}`,
+        : `A doctor has not been assigned yet. Your appointment request has been received, and our team will confirm the doctor shortly.\n\n${formatAppointmentForPatient(appointment)}`,
     }
   }
 
@@ -1132,7 +1132,7 @@ async function handleReturningPatientMemory(
     return {
       label: 'booking_intent_existing_appointment',
       sentiment: 'neutral',
-      response: `Welcome back${context.patient.name ? `, ${firstName(context.patient.name)}` : ''}. I can see you already have an appointment request:\n\n${formatAppointmentForPatient(appointment)}\n\nReply "CHANGE APPOINTMENT" to update this request, or "START NEW BOOKING" if you want to book a separate appointment.`,
+      response: `${buildWelcomeBackGreeting(context.patient.name)} I can see your current appointment request:\n\n${formatAppointmentForPatient(appointment)}\n\nReply "CHANGE APPOINTMENT" to update this request, or "START NEW BOOKING" if you want to book a separate appointment.`,
     }
   }
 
@@ -1140,7 +1140,7 @@ async function handleReturningPatientMemory(
     return {
       label: 'appointment_status',
       sentiment: 'neutral',
-      response: `Welcome back${context.patient.name ? `, ${firstName(context.patient.name)}` : ''}.\n\n${formatAppointmentForPatient(appointment!)}\n\nYou can reply "Cancel appointment", "Reschedule appointment", "Who is my doctor?", or "Speak to the team".`,
+      response: buildAppointmentStatusReply(context, appointment!),
     }
   }
 
@@ -1152,154 +1152,15 @@ async function handleReturningPatientMemory(
     }
   }
 
-  if (isSimpleGreeting(lower) && isKnownPatient(context.patient) && !appointment) {
+  if (isSimpleGreeting(lower) && isKnownPatient(context.patient) && !hasActiveAppointment) {
     return {
       label: 'returning_patient_no_appointment',
       sentiment: 'positive',
-      response: `Welcome back${context.patient.name ? `, ${firstName(context.patient.name)}` : ''}. I do not see an active appointment request for you right now.\n\nHow can I help today?\n\n• Book an appointment\n• Ask about our services\n• Learn about costs\n• Get emergency support`,
+      response: `${buildWelcomeBackGreeting(context.patient.name)}\n\nI still have your details on file, and there is no active appointment request at the moment.\n\nHow can I help today?\n\n• Book an appointment\n• Ask about our services\n• Learn about costs\n• Get emergency support`,
     }
   }
 
   return null
-}
-
-function buildPatientMemoryPrompt(context: PatientMemoryContext): AIMessage | null {
-  if (!isKnownPatient(context.patient) && !context.latestAppointment && !context.unresolvedEmergency) return null
-
-  const appointmentSummary = context.latestAppointment
-    ? formatAppointmentForPatient(context.latestAppointment)
-    : 'No appointment found.'
-  const emergencySummary = context.unresolvedEmergency
-    ? `${context.unresolvedEmergency.severity ?? 'Urgent'} ${context.unresolvedEmergency.alert_type ?? 'alert'} opened ${context.unresolvedEmergency.created_at}.`
-    : 'No unresolved emergency alert.'
-
-  return {
-    role: 'system',
-    content: `Patient context from Serenity database. Use only these verified facts; do not invent appointment details or doctor assignment.
-Patient: ${context.patient.name ?? 'Unknown'} (${context.patient.phone_number ?? 'phone not available'})
-Email: ${context.patient.email ?? 'Not provided'}
-Gender: ${context.patient.gender ?? 'Not provided'}
-Location: ${context.patient.location ?? 'Not provided'}
-Consent: ${context.patient.consent_ndpr ? 'Recorded' : 'Not recorded'}
-Latest appointment: ${appointmentSummary}
-Emergency status: ${emergencySummary}`,
-  }
-}
-
-function formatAppointmentForPatient(
-  appointment: AppointmentMemoryRow,
-  options: { includeStatus?: boolean } = {},
-): string {
-  const includeStatus = options.includeStatus ?? true
-  const status = appointmentStatusForPatient(appointment.status)
-  const doctorName = getAppointmentDoctorName(appointment) ?? 'Doctor not assigned yet'
-  const date = appointment.appointment_date ? formatDisplayDate(appointment.appointment_date) : 'Date not set'
-  const time = appointment.appointment_time?.slice(0, 5) ?? 'Time not set'
-  const lines = [
-    includeStatus ? `Status: ${status}` : null,
-    `Service: ${appointment.service_type ?? 'Consultation'}`,
-    `Date: ${date}`,
-    `Time: ${time}`,
-    `Center: ${appointment.center ?? 'Not selected'}`,
-    `Doctor: ${doctorName}`,
-  ]
-
-  return lines.filter(Boolean).join('\n')
-}
-
-function appointmentStatusForPatient(status: AppointmentMemoryRow['status']): string {
-  switch (status) {
-    case 'pending':
-      return 'Pending secretary confirmation'
-    case 'confirmed':
-      return 'Confirmed'
-    case 'rescheduled':
-      return 'Rescheduled'
-    case 'completed':
-      return 'Completed'
-    case 'cancelled':
-      return 'Cancelled'
-    case 'no_show':
-      return 'Missed appointment'
-    default:
-      return 'Saved'
-  }
-}
-
-function getAppointmentDoctorName(appointment: AppointmentMemoryRow): string | null {
-  return appointment.doctors?.name ?? null
-}
-
-function isActiveAppointmentStatus(status: AppointmentMemoryRow['status']): boolean {
-  return ['pending', 'confirmed', 'rescheduled'].includes(status)
-}
-
-function isKnownPatient(patient: PatientContext): boolean {
-  return Boolean(patient.name || patient.email || patient.gender || patient.location)
-}
-
-function firstName(name: string): string {
-  return normalizeWhitespace(name).split(' ')[0] ?? name
-}
-
-function isSimpleGreeting(message: string): boolean {
-  return ['hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening'].includes(message)
-}
-
-function isAppointmentStatusIntent(message: string): boolean {
-  return matchesAny(message, [
-    'my appointment',
-    'appointment status',
-    'did you book',
-    'is it booked',
-    'do i have appointment',
-    'do i have an appointment',
-    'when is my appointment',
-    'what about my appointment',
-    'confirm my appointment',
-  ])
-}
-
-function isBookAppointmentIntentWithExistingAppointment(message: string): boolean {
-  return matchesAny(message, ['book appointment', 'book an appointment', 'schedule appointment', 'see a doctor', 'book another appointment'])
-}
-
-function isCancelAppointmentIntent(message: string): boolean {
-  return matchesAny(message, ['cancel appointment', 'cancel my appointment', 'cancel it', 'cancel booking'])
-}
-
-function isCancelAppointmentConfirmation(message: string): boolean {
-  return ['yes cancel', 'confirm cancel', 'confirm cancel appointment', 'cancel it yes', 'yes cancel appointment'].some((phrase) => message.includes(phrase))
-}
-
-function isSimpleYes(message: string): boolean {
-  return ['yes', 'y', 'confirm', 'ok', 'okay', 'proceed'].includes(message)
-}
-
-function wasLastAssistantCancelPrompt(context: PatientMemoryContext): boolean {
-  const lastAssistantMessage = [...context.recentConversation].reverse().find((turn) => turn.role === 'assistant')
-  return Boolean(lastAssistantMessage?.content.toLowerCase().includes('yes cancel'))
-}
-
-function wasLastAssistantReschedulePrompt(context: PatientMemoryContext): boolean {
-  const lastAssistantMessage = [...context.recentConversation].reverse().find((turn) => turn.role === 'assistant')
-  return Boolean(lastAssistantMessage?.content.toLowerCase().includes('preferred new date and time'))
-}
-
-function isKeepAppointmentIntent(message: string): boolean {
-  return matchesAny(message, ['keep appointment', 'dont cancel', 'do not cancel', 'leave it', 'keep it'])
-}
-
-function isRescheduleIntent(message: string): boolean {
-  return matchesAny(message, ['reschedule', 'change appointment', 'change my appointment', 'move appointment', 'move my appointment'])
-}
-
-function isDoctorStatusIntent(message: string): boolean {
-  return matchesAny(message, ['who is my doctor', 'which doctor', 'doctor assigned', 'assigned doctor', 'my doctor'])
-}
-
-function isSpeakToTeamIntent(message: string): boolean {
-  return matchesAny(message, ['speak to team', 'talk to staff', 'talk to human', 'speak to someone', 'call me', 'human'])
 }
 
 /**
@@ -1388,6 +1249,8 @@ async function detectAndHandleFeedbackReply(
 function getHybridTemplateResponse(message: string): TemplateResult | null {
   const lower = normalizeWhitespace(message).toLowerCase()
   if (!lower) return null
+  const asksCosts = matchesAny(lower, ['cost', 'price', 'fee', 'fees', 'how much', 'charges', 'bill', 'billing'])
+  const asksServices = matchesAny(lower, ['service', 'services', 'what do you do', 'treat', 'treatment', 'rehab', 'psychiatry', 'neurology', 'physiotherapy', 'eeg', 'dual diagnosis'])
 
   if (matchesAny(lower, ['privacy', 'data', 'ndpr', 'consent', 'delete my data', 'remove my data', 'export my data'])) {
     return {
@@ -1401,11 +1264,34 @@ For privacy requests, contact info@serenityroyalehospital.com or call +234 806 2
     }
   }
 
-  if (matchesAny(lower, ['cost', 'price', 'fee', 'fees', 'how much', 'charges', 'bill', 'billing'])) {
+  if (asksCosts && asksServices) {
+    return {
+      label: 'services_and_costs',
+      sentiment: 'positive',
+      response: `Serenity Royale Hospital provides:
+
+- Psychological Medicine and Psychiatry
+- Drug Abuse Treatment and Rehabilitation
+- Dual diagnosis support
+- Neurology
+- Encephalography (EEG)
+- Physiotherapy
+- General Medical Practice
+- Consultancy Services
+
+Standard charges:
+- Registration: ₦30,000
+- Toxicology and profiling for substance-abuse care: ₦20,000
+
+Monthly care costs vary by center, service, and patient needs. If you want an appointment, reply "Book an appointment" and I will help step by step.`,
+    }
+  }
+
+  if (asksCosts) {
     return {
       label: 'costs',
       sentiment: 'neutral',
-      response: `Here are the standard Serenity Royale Hospital costs available to me:
+      response: `Here are the standard Serenity Royale Hospital charges:
 
 Registration: ₦30,000
 Toxicology and profiling for substance-abuse care: ₦20,000
@@ -1431,7 +1317,7 @@ Email: info@serenityroyalehospital.com`,
     }
   }
 
-  if (matchesAny(lower, ['service', 'services', 'what do you do', 'treat', 'treatment', 'rehab', 'psychiatry', 'neurology', 'physiotherapy', 'eeg', 'dual diagnosis'])) {
+  if (asksServices) {
     return {
       label: 'services',
       sentiment: 'positive',
@@ -1561,40 +1447,457 @@ async function handleBookingSession(
     case BOOKING_STEPS.TIME: {
       const parsed = parseAppointmentTime(msg)
       if (parsed.error) return { response: parsed.error, sentiment: 'neutral' }
-      await updateBookingSession(supabase, session.id, { collected_time: parsed.value, current_step: BOOKING_STEPS.CENTER })
-      return { response: 'Which center do you prefer: Karu or Galadimawa?', sentiment: 'neutral' }
-    }
-    case BOOKING_STEPS.CENTER: {
-      const parsed = parseCenter(msg)
-      if (parsed.error) return { response: parsed.error, sentiment: 'neutral' }
-      await updateBookingSession(supabase, session.id, { collected_center: parsed.value, current_step: BOOKING_STEPS.EMAIL })
+      await updateBookingSession(supabase, session.id, { collected_time: parsed.value, current_step: BOOKING_STEPS.EMAIL })
       return { response: 'What email should we send confirmation to? Reply SKIP if none.', sentiment: 'neutral' }
     }
     case BOOKING_STEPS.EMAIL: {
       const parsed = parseOptionalEmail(msg)
       if (parsed.error) return { response: parsed.error, sentiment: 'neutral' }
-      const nextSession = { ...session, collected_email: parsed.value }
-      await updateBookingSession(supabase, session.id, { collected_email: parsed.value, current_step: BOOKING_STEPS.CONFIRM })
-      return { response: buildBookingSummary(nextSession), sentiment: 'neutral' }
+      await updateBookingSession(supabase, session.id, { collected_email: parsed.value, current_step: BOOKING_STEPS.CENTER })
+      return { response: 'Which center do you prefer: Karu or Galadimawa?', sentiment: 'neutral' }
+    }
+    case BOOKING_STEPS.CENTER: {
+      const parsed = parseCenter(msg)
+      if (parsed.error) return { response: parsed.error, sentiment: 'neutral' }
+      const nextSession = { ...session, collected_center: parsed.value }
+      const availability = await checkAvailabilityForBookingSession(supabase, nextSession)
+
+      if (availability.status === 'available' || availability.status === 'needs_review') {
+        const shouldAssignDoctor = shouldAssignDoctorDuringBooking(nextSession.collected_doctor_preference)
+        const holdId = shouldAssignDoctor && availability.doctor
+          ? await createOrRefreshSlotHold(supabase, nextSession, availability.doctor, availability.appointmentDate, availability.appointmentTime)
+          : null
+        if (shouldAssignDoctor && availability.doctor && !holdId) {
+          const refreshed = await checkAvailabilityForBookingSession(supabase, nextSession)
+          await updateBookingSession(supabase, session.id, {
+            collected_center: parsed.value,
+            current_step: BOOKING_STEPS.CONFIRM,
+            availability_status: refreshed.status,
+            availability_checked_at: new Date().toISOString(),
+            availability_doctor_id: refreshed.doctor?.id ?? null,
+            availability_alternatives: refreshed.alternatives,
+            held_slot_id: null,
+          })
+          return { response: buildUnavailableSlotMessage(refreshed), sentiment: 'neutral' }
+        }
+        await updateBookingSession(supabase, session.id, {
+          collected_center: parsed.value,
+          current_step: BOOKING_STEPS.CONFIRM,
+          availability_status: availability.status,
+          availability_checked_at: new Date().toISOString(),
+          availability_doctor_id: availability.doctor?.id ?? null,
+          availability_alternatives: [],
+          held_slot_id: holdId,
+        })
+        return { response: buildAvailabilityConfirmationMessage({ ...nextSession, held_slot_id: holdId }, availability), sentiment: 'neutral' }
+      }
+
+      await updateBookingSession(supabase, session.id, {
+        collected_center: parsed.value,
+        current_step: BOOKING_STEPS.CONFIRM,
+        availability_status: availability.status,
+        availability_checked_at: new Date().toISOString(),
+        availability_doctor_id: availability.doctor?.id ?? null,
+        availability_alternatives: availability.alternatives,
+        held_slot_id: null,
+      })
+      return { response: buildUnavailableSlotMessage(availability), sentiment: 'neutral' }
     }
     case BOOKING_STEPS.CONFIRM: {
+      if (session.availability_status === 'unavailable') {
+        return handleUnavailableSlotReply(supabase, session, msg)
+      }
+
       const confirmed = parseConfirmation(msg)
       if (confirmed === null) {
-        return { response: `${buildBookingSummary(session)}\n\nPlease reply YES to submit this appointment request or NO to cancel.`, sentiment: 'neutral' }
+        return { response: `${buildBookingSummary(session)}\n\nPlease reply YES to confirm this appointment or NO to cancel.`, sentiment: 'neutral' }
       }
       if (!confirmed) {
-        await updateBookingSession(supabase, session.id, { status: 'abandoned', abandoned_at: new Date().toISOString() })
+        await releaseSlotHold(supabase, session.held_slot_id ?? null)
+        await updateBookingSession(supabase, session.id, { status: 'abandoned', abandoned_at: new Date().toISOString(), held_slot_id: null })
         return { response: "No problem. I have cancelled this booking request. Send 'Book an appointment' anytime you want to start again.", sentiment: 'neutral' }
       }
 
-      const response = await finalizeBooking(supabase, session, phoneNumber, patient)
-      await updateBookingSession(supabase, session.id, { status: 'completed', completed_at: new Date().toISOString() })
-      return { response, sentiment: 'positive' }
+      const result = await finalizeBooking(supabase, session, phoneNumber, patient)
+      if (result.completed) {
+        await updateBookingSession(supabase, session.id, { status: 'completed', completed_at: new Date().toISOString() })
+      }
+      return { response: result.response, sentiment: result.sentiment }
     }
     default:
       await updateBookingSession(supabase, session.id, { current_step: BOOKING_STEPS.NAME })
       return { response: FIRST_BOOKING_PROMPT, sentiment: 'neutral' }
   }
+}
+
+async function handleUnavailableSlotReply(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  session: BookingSessionRow,
+  msg: string,
+): Promise<BookingResult> {
+  const selected = parseAlternativeSelection(msg, getStoredAlternatives(session))
+
+  if (selected) {
+    const doctor = await findDoctorById(supabase, selected.doctorId)
+    if (!doctor) {
+      return {
+        response: 'I could not find that doctor record anymore. Please choose another option or send a new date and time.',
+        sentiment: 'neutral',
+      }
+    }
+
+    const nextSession = {
+      ...session,
+      collected_date: selected.appointmentDate,
+      collected_time: selected.appointmentTime,
+      availability_doctor_id: selected.doctorId,
+    }
+    const availability = await checkAvailabilityForBookingSession(supabase, nextSession, doctor)
+    if (availability.status === 'available' || availability.status === 'needs_review') {
+      const shouldAssignDoctor = shouldAssignDoctorDuringBooking(nextSession.collected_doctor_preference)
+      const holdId = shouldAssignDoctor
+        ? await createOrRefreshSlotHold(supabase, nextSession, doctor, availability.appointmentDate, availability.appointmentTime)
+        : null
+      if (shouldAssignDoctor && !holdId) {
+        const refreshed = await checkAvailabilityForBookingSession(supabase, nextSession, doctor)
+        await updateBookingSession(supabase, session.id, {
+          availability_status: refreshed.status,
+          availability_checked_at: new Date().toISOString(),
+          availability_alternatives: refreshed.alternatives,
+          held_slot_id: null,
+        })
+        return { response: buildUnavailableSlotMessage(refreshed), sentiment: 'neutral' }
+      }
+      await updateBookingSession(supabase, session.id, {
+        collected_date: selected.appointmentDate,
+        collected_time: selected.appointmentTime,
+        availability_status: availability.status,
+        availability_checked_at: new Date().toISOString(),
+        availability_doctor_id: doctor.id,
+        availability_alternatives: [],
+        held_slot_id: holdId,
+      })
+      return { response: buildAvailabilityConfirmationMessage({ ...nextSession, held_slot_id: holdId }, availability), sentiment: 'neutral' }
+    }
+
+    await updateBookingSession(supabase, session.id, {
+      availability_status: availability.status,
+      availability_checked_at: new Date().toISOString(),
+      availability_alternatives: availability.alternatives,
+      held_slot_id: null,
+    })
+    return { response: buildUnavailableSlotMessage(availability), sentiment: 'neutral' }
+  }
+
+  const parsedDate = parseAppointmentDate(msg)
+  const parsedTime = parseAppointmentTime(msg)
+  if (!parsedDate.error && !parsedTime.error) {
+    const nextSession = {
+      ...session,
+      collected_date: parsedDate.value,
+      collected_time: parsedTime.value,
+    }
+    const availability = await checkAvailabilityForBookingSession(supabase, nextSession)
+    if (availability.status === 'available' || availability.status === 'needs_review') {
+      const shouldAssignDoctor = shouldAssignDoctorDuringBooking(nextSession.collected_doctor_preference)
+      const holdId = shouldAssignDoctor && availability.doctor
+        ? await createOrRefreshSlotHold(supabase, nextSession, availability.doctor, availability.appointmentDate, availability.appointmentTime)
+        : null
+      if (shouldAssignDoctor && availability.doctor && !holdId) {
+        const refreshed = await checkAvailabilityForBookingSession(supabase, nextSession)
+        await updateBookingSession(supabase, session.id, {
+          collected_date: parsedDate.value,
+          collected_time: parsedTime.value,
+          availability_status: refreshed.status,
+          availability_checked_at: new Date().toISOString(),
+          availability_doctor_id: refreshed.doctor?.id ?? null,
+          availability_alternatives: refreshed.alternatives,
+          held_slot_id: null,
+        })
+        return { response: buildUnavailableSlotMessage(refreshed), sentiment: 'neutral' }
+      }
+      await updateBookingSession(supabase, session.id, {
+        collected_date: parsedDate.value,
+        collected_time: parsedTime.value,
+        availability_status: availability.status,
+        availability_checked_at: new Date().toISOString(),
+        availability_doctor_id: availability.doctor?.id ?? null,
+        availability_alternatives: [],
+        held_slot_id: holdId,
+      })
+      return { response: buildAvailabilityConfirmationMessage({ ...nextSession, held_slot_id: holdId }, availability), sentiment: 'neutral' }
+    }
+
+    await updateBookingSession(supabase, session.id, {
+      collected_date: parsedDate.value,
+      collected_time: parsedTime.value,
+      availability_status: availability.status,
+      availability_checked_at: new Date().toISOString(),
+      availability_doctor_id: availability.doctor?.id ?? null,
+      availability_alternatives: availability.alternatives,
+      held_slot_id: null,
+    })
+    return { response: buildUnavailableSlotMessage(availability), sentiment: 'neutral' }
+  }
+
+  return {
+    response: `${buildUnavailableSlotMessage({ alternatives: getStoredAlternatives(session) } as AppointmentAvailabilityResult)}\n\nReply with 1, 2, or 3, or send another date and time like "Monday 10am".`,
+    sentiment: 'neutral',
+  }
+}
+
+function parseAlternativeSelection(message: string, alternatives: SuggestedSlot[]): SuggestedSlot | null {
+  const normalized = message.trim().toLowerCase()
+  const match = normalized.match(/^[#\s]*(\d)$/)
+  if (!match) return null
+  const index = Number(match[1]) - 1
+  return alternatives[index] ?? null
+}
+
+function getStoredAlternatives(session: BookingSessionRow): SuggestedSlot[] {
+  if (!Array.isArray(session.availability_alternatives)) return []
+  return session.availability_alternatives
+    .map((item) => item && typeof item === 'object' ? item as Partial<SuggestedSlot> : null)
+    .filter((item): item is SuggestedSlot => Boolean(
+      item?.doctorId &&
+      item?.doctorName &&
+      item?.appointmentDate &&
+      item?.appointmentTime &&
+      item?.center,
+    ))
+}
+
+async function checkAvailabilityForBookingSession(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  session: Partial<BookingSessionRow>,
+  forcedDoctor?: AvailabilityDoctor | null,
+): Promise<AppointmentAvailabilityResult> {
+  const appointmentDate = session.collected_date ?? ''
+  const appointmentTime = session.collected_time ?? ''
+  const center = normalizeCenter(session.collected_center ?? 'Galadimawa')
+  const doctor = forcedDoctor ?? await resolveDoctorForAvailability(supabase, session, center)
+  const candidateDoctors = doctor ? [doctor] : await loadDoctorsForCenter(supabase, center)
+
+  return checkAppointmentAvailability({
+    appointmentDate,
+    appointmentTime,
+    center,
+    doctor,
+    candidateDoctors,
+    excludeBookingSessionId: session.id ?? null,
+    durationMinutes: DEFAULT_APPOINTMENT_DURATION_MINUTES,
+  }, buildAvailabilityDeps(supabase))
+}
+
+async function resolveDoctorForAvailability(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  session: Partial<BookingSessionRow>,
+  _center: string,
+): Promise<AvailabilityDoctor | null> {
+  if (session.availability_doctor_id) return findDoctorById(supabase, session.availability_doctor_id)
+  if (session.collected_doctor_preference && !isAnyDoctorPreference(session.collected_doctor_preference)) {
+    return findPreferredDoctor(supabase, session.collected_doctor_preference)
+  }
+
+  return null
+}
+
+function buildAvailabilityDeps(supabase: ReturnType<typeof getSupabaseClient>) {
+  return {
+    listActiveAppointments: (params: { doctorId: string; appointmentDate: string; excludeAppointmentId?: string | null }) =>
+      listActiveAppointmentsForDoctor(supabase, params),
+    listActiveSlotHolds: (params: { doctorId: string; appointmentDate: string; excludeBookingSessionId?: string | null }) =>
+      listActiveSlotHoldsForDoctor(supabase, params),
+    isCalendarConfigured,
+    checkCalendarConflict,
+  }
+}
+
+async function listActiveAppointmentsForDoctor(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  params: { doctorId: string; appointmentDate: string; excludeAppointmentId?: string | null },
+): Promise<BusyAppointment[]> {
+  let query = supabase
+    .from('appointments')
+    .select('id, appointment_time, status')
+    .eq('doctor_id', params.doctorId)
+    .eq('appointment_date', params.appointmentDate)
+
+  if (params.excludeAppointmentId) query = query.neq('id', params.excludeAppointmentId)
+
+  const { data, error } = await query
+  if (error) throw new Error(`Failed to check appointment conflicts: ${error.message}`)
+  return ((data ?? []) as BusyAppointment[]).filter((appointment) => !isNonBlockingAppointmentStatus(appointment.status))
+}
+
+async function listActiveSlotHoldsForDoctor(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  params: { doctorId: string; appointmentDate: string; excludeBookingSessionId?: string | null },
+): Promise<BusySlotHold[]> {
+  let query = supabase
+    .from('appointment_slot_holds')
+    .select('id, appointment_time, duration_minutes, booking_session_id, expires_at, status')
+    .eq('doctor_id', params.doctorId)
+    .eq('appointment_date', params.appointmentDate)
+    .eq('status', 'active')
+    .gt('expires_at', new Date().toISOString())
+
+  if (params.excludeBookingSessionId) query = query.neq('booking_session_id', params.excludeBookingSessionId)
+
+  const { data, error } = await query
+  if (error) throw new Error(`Failed to check slot holds: ${error.message}`)
+  return (data ?? []) as BusySlotHold[]
+}
+
+async function loadDoctorsForCenter(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  center: string,
+): Promise<AvailabilityDoctor[]> {
+  const { data, error } = await supabase
+    .from('doctors')
+    .select('id, name, phone, location')
+    .eq('is_active', true)
+    .order('name', { ascending: true })
+    .limit(50)
+
+  if (error) throw new Error(`Failed to load doctors: ${error.message}`)
+  return ((data ?? []) as AvailabilityDoctor[]).filter((doctor) => doctorServesCenter(doctor.location ?? 'Both', center))
+}
+
+async function findDoctorById(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  doctorId: string,
+): Promise<AvailabilityDoctor | null> {
+  const { data, error } = await supabase
+    .from('doctors')
+    .select('id, name, phone, location')
+    .eq('id', doctorId)
+    .eq('is_active', true)
+    .maybeSingle()
+
+  if (error) throw new Error(`Failed to load doctor: ${error.message}`)
+  return data as AvailabilityDoctor | null
+}
+
+async function createOrRefreshSlotHold(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  session: Partial<BookingSessionRow>,
+  doctor: AvailabilityDoctor,
+  appointmentDate: string,
+  appointmentTime: string,
+): Promise<string | null> {
+  if (!session.id || !session.patient_id) return null
+
+  await supabase
+    .from('appointment_slot_holds')
+    .update({ status: 'released' })
+    .eq('booking_session_id', session.id)
+    .eq('status', 'active')
+
+  const { data, error } = await supabase
+    .rpc('create_appointment_slot_hold_with_lock', {
+      p_patient_id: session.patient_id,
+      p_doctor_id: doctor.id,
+      p_booking_session_id: session.id,
+      p_appointment_date: appointmentDate,
+      p_appointment_time: appointmentTime,
+      p_duration_minutes: DEFAULT_APPOINTMENT_DURATION_MINUTES,
+      p_hold_minutes: SLOT_HOLD_MINUTES,
+    })
+
+  if (error) throw new Error(`Failed to hold appointment slot: ${error.message}`)
+  return typeof data === 'string' ? data : null
+}
+
+async function releaseSlotHold(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  holdId: string | null,
+): Promise<void> {
+  if (!holdId) return
+  await supabase.from('appointment_slot_holds').update({ status: 'released' }).eq('id', holdId).eq('status', 'active')
+}
+
+async function createWhatsAppAppointmentWithLock(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  params: {
+    patientId: string
+    doctorId: string | null
+    bookingSessionId: string
+    heldSlotId: string | null
+    appointmentDate: string
+    appointmentTime: string
+    center: string
+    serviceType: string
+    reason: string
+    status: 'pending' | 'confirmed'
+    calendarSyncStatus: string | null
+    calendarSyncError: string | null
+  },
+): Promise<string | null> {
+  const payload = params.doctorId && params.heldSlotId
+    ? {
+      p_patient_id: params.patientId,
+      p_doctor_id: params.doctorId,
+      p_booking_session_id: params.bookingSessionId,
+      p_held_slot_id: params.heldSlotId,
+      p_appointment_date: params.appointmentDate,
+      p_appointment_time: params.appointmentTime,
+      p_center: params.center,
+      p_service_type: params.serviceType,
+      p_reason: params.reason,
+      p_status: params.status,
+      p_calendar_sync_status: params.calendarSyncStatus,
+      p_calendar_sync_error: params.calendarSyncError,
+      p_created_from_whatsapp: true,
+    }
+    : {
+      p_patient_id: params.patientId,
+      p_doctor_id: params.doctorId,
+      p_booking_session_id: params.bookingSessionId,
+      p_appointment_date: params.appointmentDate,
+      p_appointment_time: params.appointmentTime,
+      p_center: params.center,
+      p_service_type: params.serviceType,
+      p_reason: params.reason,
+      p_status: params.status,
+      p_calendar_sync_status: params.calendarSyncStatus,
+      p_calendar_sync_error: params.calendarSyncError,
+      p_created_from_whatsapp: true,
+    }
+
+  const { data, error } = await supabase.rpc('create_whatsapp_appointment_with_lock', payload)
+
+  if (error) throw new Error(`Failed to create appointment: ${error.message}`)
+  return typeof data === 'string' ? data : null
+}
+
+function buildAvailabilityConfirmationMessage(
+  session: Partial<BookingSessionRow>,
+  availability: AppointmentAvailabilityResult,
+): string {
+  const patientName = session.collected_name ?? 'Patient'
+  const serviceType = normalizeServiceType(session.collected_service_type)
+  const center = normalizeCenter(session.collected_center ?? 'Galadimawa')
+  const doctorName = shouldAssignDoctorDuringBooking(session.collected_doctor_preference)
+    ? availability.doctor?.name ?? 'To be assigned'
+    : 'To be assigned'
+  const date = formatDisplayDate(availability.appointmentDate)
+  const time = availability.appointmentTime.slice(0, 5)
+  const statusLine = availability.status === 'available'
+    ? 'That time is available. Please confirm these details if you would like me to submit your appointment request:'
+    : 'That time looks available. Please confirm these details if you would like me to submit your appointment request. Our team will send the final confirmation shortly.'
+
+  return `Let me check that for you.\n\n${statusLine}\n\nName: ${patientName}\nService: ${serviceType}\nDate: ${date}\nTime: ${time}\nCenter: ${center}\nDoctor: ${doctorName}\nEmail: ${session.collected_email ?? 'Not provided'}\n\nReply YES to confirm or NO to cancel.`
+}
+
+function buildUnavailableSlotMessage(availability: Pick<AppointmentAvailabilityResult, 'alternatives'>): string {
+  const alternatives = availability.alternatives ?? []
+  if (alternatives.length === 0) {
+    return 'Let me check that for you.\n\nThat time is not available. Please send another date and time, for example "Monday 10am".'
+  }
+
+  const rows = alternatives.slice(0, 3).map((slot, index) => `${index + 1}. ${formatSuggestedSlot(slot)}`)
+  return `Let me check that for you.\n\nThat time is not available. The closest available options are:\n\n${rows.join('\n')}\n\nReply 1, 2, or 3 to choose a slot, or send another date and time.`
 }
 
 /**
@@ -1605,86 +1908,150 @@ async function finalizeBooking(
   session: BookingSessionRow,
   phoneNumber: string,
   patient: Pick<PatientRow, 'id' | 'name'> & { email?: string },
-): Promise<string> {
-  const doctor = await findPreferredDoctor(supabase, session.collected_doctor_preference)
+): Promise<FinalizeBookingResult> {
   const appointmentDate = session.collected_date ?? new Date(Date.now() + 7 * 24 * 3600000).toISOString().split('T')[0]
   const appointmentTime = session.collected_time ?? '09:00'
   const center = normalizeCenter(session.collected_center ?? 'Galadimawa')
   const patientName = session.collected_name ?? patient.name ?? 'Patient'
   const patientEmail = session.collected_email
   const serviceType = normalizeServiceType(session.collected_service_type)
-  const doctorName = doctor?.name ?? 'To be assigned'
   const formattedDate = formatDisplayDate(appointmentDate)
-  const doctorCenterMismatch = Boolean(doctor?.location && !doctorServesCenter(doctor.location, center))
-  const hasConflict = doctor?.id
-    ? await hasDoctorSlotConflict(supabase, doctor.id, appointmentDate, appointmentTime)
-    : false
 
-  let calendarEventId: string | null = null
-  let status: 'pending' | 'confirmed' = 'pending'
-  let calendarStatus = 'not_checked'
-  let calendarError: string | null = null
+  const availability = await checkAvailabilityForBookingSession(supabase, session)
 
-  if (!doctor?.id) {
-    calendarStatus = 'pending_no_matched_doctor'
-  } else if (doctorCenterMismatch) {
-    calendarStatus = 'pending_doctor_center_mismatch'
-    calendarError = `${doctor.name} is listed for ${doctor.location}, but patient selected ${center}`
-  } else if (hasConflict) {
-    calendarStatus = 'pending_database_conflict'
-  } else if (!isCalendarConfigured()) {
-    calendarStatus = 'pending_calendar_not_configured'
-    calendarError = 'GOOGLE_SERVICE_ACCOUNT_JSON and GOOGLE_CALENDAR_ID are required'
-  } else {
-    try {
-      const calendarBusy = await checkCalendarConflict(appointmentDate, appointmentTime)
-      if (calendarBusy) {
-        calendarStatus = 'pending_calendar_busy'
-      } else {
-        calendarEventId = await createAppointmentEvent({ patientName, patientPhone: phoneNumber, doctorName, serviceType, center, appointmentDate, appointmentTime, reason: 'Booked via WhatsApp' })
-        status = 'confirmed'
-        calendarStatus = 'synced'
-      }
-    } catch (err) {
-      calendarStatus = 'pending_calendar_error'
-      calendarError = (err as Error).message
-      console.error('[ai-assistant] Google Calendar check/sync failed; appointment will stay pending:', err)
+  if (availability.status === 'invalid' || availability.status === 'unavailable' || availability.status === 'no_doctor') {
+    await updateBookingSession(supabase, session.id, {
+      availability_status: availability.status,
+      availability_checked_at: new Date().toISOString(),
+      availability_doctor_id: availability.doctor?.id ?? null,
+      availability_alternatives: availability.alternatives,
+      held_slot_id: null,
+    })
+    return {
+      response: availability.alternatives.length > 0
+        ? buildUnavailableSlotMessage(availability)
+        : `${availability.patientMessage}\n\nPlease send another date/time or reply NO to cancel.`,
+      completed: false,
+      sentiment: 'neutral',
     }
   }
 
-  const doctorIdForInsert = hasConflict || doctorCenterMismatch ? null : doctor?.id ?? null
+  const doctor = availability.doctor
+  const assignDoctorNow = shouldAssignDoctorDuringBooking(session.collected_doctor_preference)
+  const assignedDoctor = assignDoctorNow ? doctor : null
+  const doctorName = assignedDoctor?.name ?? 'To be assigned'
+  const calendarStatusBeforeInsert = assignedDoctor
+    ? (availability.status === 'available' ? 'checked_available' : availability.calendarStatus)
+    : 'pending_no_matched_doctor'
+  const calendarErrorBeforeInsert = assignedDoctor && availability.status === 'needs_review'
+    ? availability.calendarError
+    : null
   const reason = [
     'Booked via WhatsApp AI',
     session.collected_doctor_preference ? `Doctor preference: ${session.collected_doctor_preference}` : null,
-    calendarStatus !== 'synced' ? `Calendar status: ${calendarStatus}` : null,
-    calendarError ? `Calendar note: ${formatCalendarStatusForStaff(calendarStatus)}` : null,
+    `Calendar status: ${calendarStatusBeforeInsert}`,
+    calendarErrorBeforeInsert ? `Calendar note: ${formatCalendarStatusForStaff(calendarStatusBeforeInsert)}` : null,
   ].filter(Boolean).join(' | ')
 
-  const { data: appointment, error: appointmentError } = await supabase.from('appointments').insert({
-    patient_id: session.patient_id,
-    doctor_id: doctorIdForInsert,
-    booking_session_id: session.id,
-    appointment_date: appointmentDate,
-    appointment_time: appointmentTime,
+  const appointmentId = await createWhatsAppAppointmentWithLock(supabase, {
+    patientId: session.patient_id,
+    doctorId: assignedDoctor?.id ?? null,
+    bookingSessionId: session.id,
+    heldSlotId: assignedDoctor?.id ? session.held_slot_id ?? null : null,
+    appointmentDate,
+    appointmentTime,
     center,
-    service_type: serviceType,
+    serviceType,
     reason,
-    status,
-    google_calendar_event_id: calendarEventId,
-    google_calendar_synced_at: calendarEventId ? new Date().toISOString() : null,
-    calendar_sync_status: calendarStatus,
-    calendar_sync_error: calendarError,
-    confirmation_sent: false,
-    created_from_whatsapp: true,
-  }).select('id').single()
+    status: 'pending',
+    calendarSyncStatus: calendarStatusBeforeInsert,
+    calendarSyncError: calendarErrorBeforeInsert,
+  })
 
-  if (appointmentError || !appointment) {
-    if (calendarEventId) {
-      await cancelAppointmentEvent(calendarEventId).catch((err) => {
-        console.error('[ai-assistant] Failed to clean up orphaned calendar event:', err)
-      })
+  if (!appointmentId) {
+    const refreshedAvailability = await checkAvailabilityForBookingSession(supabase, session)
+    await updateBookingSession(supabase, session.id, {
+      availability_status: refreshedAvailability.status,
+      availability_checked_at: new Date().toISOString(),
+      availability_alternatives: refreshedAvailability.alternatives,
+      held_slot_id: null,
+    })
+    return {
+      response: refreshedAvailability.alternatives.length > 0
+        ? buildUnavailableSlotMessage(refreshedAvailability)
+        : 'That time was just taken by another appointment. Please send another date/time and I will check again.',
+      completed: false,
+      sentiment: 'neutral',
     }
-    throw new Error(`Failed to create appointment: ${appointmentError?.message}`)
+  }
+
+  let calendarEventId: string | null = null
+  let status: 'pending' | 'confirmed' = 'pending'
+  let calendarStatus = calendarStatusBeforeInsert
+  let calendarError = calendarErrorBeforeInsert
+
+  if (availability.status === 'available' && assignedDoctor?.id) {
+    try {
+      calendarEventId = await createAppointmentEvent({
+        patientName,
+        patientPhone: phoneNumber,
+        doctorName,
+        serviceType,
+        center,
+        appointmentDate,
+        appointmentTime,
+        reason: 'Booked via WhatsApp',
+      })
+      status = 'confirmed'
+      calendarStatus = 'synced'
+      calendarError = null
+
+      const { error } = await supabase
+        .from('appointments')
+        .update({
+          status,
+          google_calendar_event_id: calendarEventId,
+          google_calendar_synced_at: new Date().toISOString(),
+          calendar_sync_status: calendarStatus,
+          calendar_sync_error: null,
+          reason: [
+            'Booked via WhatsApp AI',
+            session.collected_doctor_preference ? `Doctor preference: ${session.collected_doctor_preference}` : null,
+            'Calendar status: synced',
+          ].filter(Boolean).join(' | '),
+        })
+        .eq('id', appointmentId)
+
+      if (error) throw new Error(error.message)
+    } catch (err) {
+      status = 'pending'
+      calendarStatus = 'pending_calendar_error'
+      calendarError = err instanceof Error ? err.message : String(err)
+      console.error('[ai-assistant] Google Calendar event creation failed; appointment will stay pending:', err)
+
+      if (calendarEventId) {
+        await cancelAppointmentEvent(calendarEventId).catch((cleanupErr) => {
+          console.error('[ai-assistant] Failed to clean up calendar event after DB update error:', cleanupErr)
+        })
+      }
+
+      await supabase
+        .from('appointments')
+        .update({
+          status,
+          google_calendar_event_id: null,
+          google_calendar_synced_at: null,
+          calendar_sync_status: calendarStatus,
+          calendar_sync_error: calendarError,
+          reason: [
+            'Booked via WhatsApp AI',
+            session.collected_doctor_preference ? `Doctor preference: ${session.collected_doctor_preference}` : null,
+            `Calendar status: ${calendarStatus}`,
+            `Calendar note: ${formatCalendarStatusForStaff(calendarStatus)}`,
+          ].filter(Boolean).join(' | '),
+        })
+        .eq('id', appointmentId)
+    }
   }
 
   const patientUpdates: Record<string, string> = {}
@@ -1697,7 +2064,7 @@ async function finalizeBooking(
   }
 
   await notifyStaffOfBookedAppointment(supabase, {
-    appointmentId: appointment.id,
+    appointmentId,
     patientId: session.patient_id,
     status,
     patientName,
@@ -1709,7 +2076,7 @@ async function finalizeBooking(
     appointmentTime,
     center,
     doctorName,
-    assignedDoctor: doctorCenterMismatch ? null : doctor,
+    assignedDoctor,
     doctorPreference: session.collected_doctor_preference ?? 'Any available doctor',
     calendarStatus,
     calendarError,
@@ -1730,7 +2097,7 @@ async function finalizeBooking(
       })
       await logAppointmentNotification(supabase, {
         patientId: session.patient_id,
-        appointmentId: appointment.id,
+        appointmentId,
         notificationType: 'appointment_confirmation',
         templateName: 'appointment_confirmation',
         channel: 'email',
@@ -1744,7 +2111,7 @@ async function finalizeBooking(
       console.error('[ai-assistant] Email confirmation failed:', err)
       await logAppointmentNotification(supabase, {
         patientId: session.patient_id,
-        appointmentId: appointment.id,
+        appointmentId,
         notificationType: 'appointment_confirmation',
         templateName: 'appointment_confirmation',
         channel: 'email',
@@ -1761,10 +2128,18 @@ async function finalizeBooking(
   console.log(`[ai-assistant] Booking ${status}: ${patientName} on ${appointmentDate} at ${appointmentTime} (${center})`)
 
   if (status === 'confirmed') {
-    return `Your appointment is confirmed at Serenity Royale Hospital.\n\nName: ${patientName}\nService: ${serviceType}\nDate: ${formattedDate}\nTime: ${appointmentTime.slice(0, 5)}\nCenter: ${center}\nDoctor: ${doctorName}\n\nPlease arrive 10-15 minutes early. To reschedule, reply here or call +234 806 219 7384.`
+    return {
+      response: `Your appointment is confirmed at Serenity Royale Hospital.\n\nName: ${patientName}\nService: ${serviceType}\nDate: ${formattedDate}\nTime: ${appointmentTime.slice(0, 5)}\nCenter: ${center}\nDoctor: ${doctorName}\n\nPlease arrive 10-15 minutes early. To reschedule, reply here or call +234 806 219 7384.`,
+      completed: true,
+      sentiment: 'positive',
+    }
   }
 
-  return `Your appointment request has been received. Our team will confirm the exact slot shortly.\n\nName: ${patientName}\nService: ${serviceType}\nPreferred date: ${formattedDate}\nPreferred time: ${appointmentTime.slice(0, 5)}\nCenter: ${center}\nDoctor preference: ${session.collected_doctor_preference ?? 'Any available doctor'}\n\nFor urgent help, call +234 806 219 7384.`
+  return {
+    response: `Thank you. Your appointment request has been received.\n\nName: ${patientName}\nService: ${serviceType}\nPreferred date: ${formattedDate}\nPreferred time: ${appointmentTime.slice(0, 5)}\nCenter: ${center}\nDoctor preference: ${session.collected_doctor_preference ?? 'Any available doctor'}\n\nOur team will confirm the exact slot shortly. For urgent help, call +234 806 219 7384.`,
+    completed: true,
+    sentiment: 'positive',
+  }
 }
 
 async function notifyStaffOfBookedAppointment(
@@ -1954,6 +2329,8 @@ function formatCalendarStatusForStaff(status: string | null): string {
   switch (status) {
     case 'synced':
       return 'Synced with Google Calendar.'
+    case 'checked_available':
+      return 'Availability checked. Calendar event is not synced yet.'
     case 'pending_no_matched_doctor':
       return 'Doctor not assigned yet. Secretary should assign a doctor in the dashboard.'
     case 'pending_doctor_center_mismatch':
@@ -1977,7 +2354,8 @@ function formatCalendarStatusForStaff(status: string | null): string {
 function getDashboardUrl(appointmentId: string): string | null {
   const baseUrl = Deno.env.get('ADMIN_DASHBOARD_URL') ?? Deno.env.get('NEXT_PUBLIC_APP_URL')
   if (!baseUrl) return null
-  return `${baseUrl.replace(/\/+$/, '')}/dashboard/appointments?appointment=${appointmentId}`
+  const appointmentPath = `/dashboard/appointments?appointment=${encodeURIComponent(appointmentId)}`
+  return `${baseUrl.replace(/\/+$/, '')}/auth/login?next=${encodeURIComponent(appointmentPath)}`
 }
 
 async function logAppointmentNotification(
@@ -2018,14 +2396,6 @@ async function logAppointmentNotification(
   }
 }
 
-function normalizeCenter(value: string): 'Karu' | 'Galadimawa' {
-  return value.toLowerCase().includes('karu') ? 'Karu' : 'Galadimawa'
-}
-
-function normalizeServiceType(value?: string | null): string {
-  return parseServiceType(value ?? '').value ?? 'Psychological Medicine and Psychiatry'
-}
-
 async function updateBookingSession(
   supabase: ReturnType<typeof getSupabaseClient>,
   sessionId: string,
@@ -2047,160 +2417,11 @@ function getPromptForStep(session: BookingSessionRow): string {
     case BOOKING_STEPS.DOCTOR: return 'Do you prefer a specific doctor? You can reply with a doctor name or say "any available doctor".'
     case BOOKING_STEPS.DATE: return 'What date would you prefer? Please use YYYY-MM-DD, DD/MM/YYYY, "tomorrow", "next week", or a weekday like Monday.'
     case BOOKING_STEPS.TIME: return 'What time would you prefer? Outpatient hours are 8:00am to 4:00pm. For example: 10am or 14:30.'
-    case BOOKING_STEPS.CENTER: return 'Which center do you prefer: Karu or Galadimawa?'
     case BOOKING_STEPS.EMAIL: return 'What email should we send confirmation to? Reply SKIP if none.'
+    case BOOKING_STEPS.CENTER: return 'Which center do you prefer: Karu or Galadimawa?'
     case BOOKING_STEPS.CONFIRM: return buildBookingSummary(session)
     default: return FIRST_BOOKING_PROMPT
   }
-}
-
-function getServicePrompt(): string {
-  return 'What service do you need?\n\nReply with one option: Psychiatry, Drug rehabilitation, EEG, Neurology, Physiotherapy, General medicine, Dual diagnosis, or Consultation.'
-}
-
-function parseFullName(message: string): ValidationResult<string> {
-  const cleaned = normalizeWhitespace(message)
-  const lower = cleaned.toLowerCase()
-  const looksLikeMenu = /[\n•]/.test(message) || ['book appointment', 'ask about', 'learn about', 'emergency support'].some((kw) => lower.includes(kw))
-  const parts = cleaned.split(' ').filter((part) => /[a-z]/i.test(part))
-
-  if (looksLikeMenu || cleaned.length < 5 || cleaned.length > 80 || parts.length < 2) {
-    return { value: null, error: 'Please send your full name, first name and surname. For example: Ada Okafor.' }
-  }
-  return { value: cleaned, error: null }
-}
-
-function parseSex(message: string): ValidationResult<string> {
-  const lower = message.trim().toLowerCase()
-  if (['male', 'm', 'man'].includes(lower)) return { value: 'Male', error: null }
-  if (['female', 'f', 'woman'].includes(lower)) return { value: 'Female', error: null }
-  if (['other', 'prefer not to say', 'rather not say', 'skip'].includes(lower)) return { value: 'Prefer not to say', error: null }
-  return { value: null, error: 'Please reply with Male, Female, or Prefer not to say.' }
-}
-
-function parseLocation(message: string): ValidationResult<string> {
-  const cleaned = normalizeWhitespace(message)
-  if (!cleaned || cleaned.length < 2 || cleaned.length > 120 || /[\n•]/.test(message)) {
-    return { value: null, error: 'Please send your current area or city. For example: Garki, Karu, Lagos, or outside Abuja.' }
-  }
-  return { value: cleaned, error: null }
-}
-
-function parseServiceType(message: string): ValidationResult<string> {
-  const lower = message.toLowerCase()
-  if (lower.includes('drug') || lower.includes('addict') || lower.includes('rehab') || lower.includes('substance')) {
-    return { value: 'Drug Abuse Treatment and Rehabilitation', error: null }
-  }
-  if (lower.includes('eeg') || lower.includes('encephal')) return { value: 'Encephalography (EEG)', error: null }
-  if (lower.includes('neuro')) return { value: 'Neurology', error: null }
-  if (lower.includes('physio')) return { value: 'Physiotherapy', error: null }
-  if (lower.includes('general')) return { value: 'General Medical Practice', error: null }
-  if (lower.includes('dual')) return { value: 'Dual Diagnosis', error: null }
-  if (lower.includes('consult')) return { value: 'Consultancy Services', error: null }
-  if (lower.includes('psych') || lower.includes('mental') || lower.includes('psychiat')) return { value: 'Psychological Medicine and Psychiatry', error: null }
-
-  return { value: null, error: getServicePrompt() }
-}
-
-function parseDoctorPreference(message: string): ValidationResult<string> {
-  const cleaned = normalizeWhitespace(message)
-  if (!cleaned || cleaned.length > 80 || /[\n•]/.test(message)) {
-    return { value: null, error: 'Please reply with a doctor name or say "any available doctor".' }
-  }
-  return { value: isAnyDoctorPreference(cleaned) ? 'Any available doctor' : cleaned, error: null }
-}
-
-function parseAppointmentDate(message: string): ValidationResult<string> {
-  const lower = message.toLowerCase()
-  const today = todayInLagos()
-  let candidate: Date | null = null
-
-  const iso = lower.match(/\b(\d{4})-(\d{2})-(\d{2})\b/)
-  const dmy = lower.match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})\b/)
-
-  if (iso) {
-    candidate = makeUtcDate(Number(iso[1]), Number(iso[2]), Number(iso[3]))
-  } else if (dmy) {
-    candidate = makeUtcDate(Number(dmy[3]), Number(dmy[2]), Number(dmy[1]))
-  } else if (lower.includes('tomorrow')) {
-    candidate = addDays(today, 1)
-  } else if (lower.includes('next week')) {
-    candidate = addDays(today, 7)
-  } else {
-    const weekdays = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
-    const weekday = weekdays.findIndex((day) => lower.includes(day))
-    if (weekday >= 0) {
-      let daysAhead = (weekday - today.getUTCDay() + 7) % 7
-      if (daysAhead === 0) daysAhead = 7
-      candidate = addDays(today, daysAhead)
-    }
-  }
-
-  if (!candidate) {
-    return { value: null, error: 'Please send a valid future date, such as 2026-05-12, 12/05/2026, tomorrow, next week, or Monday.' }
-  }
-
-  const maxDate = addDays(today, 183)
-  if (candidate <= today) return { value: null, error: 'Please choose a future appointment date.' }
-  if (candidate > maxDate) return { value: null, error: 'Please choose a date within the next 6 months.' }
-  if (candidate.getUTCDay() === 0) return { value: null, error: 'Outpatient appointments are Monday to Saturday. Please choose another date.' }
-
-  return { value: toIsoDate(candidate), error: null }
-}
-
-function parseAppointmentTime(message: string): ValidationResult<string> {
-  const match = message.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i)
-  if (!match) {
-    return { value: null, error: 'Please send a valid time between 8:00am and 4:00pm. For example: 10am or 14:30.' }
-  }
-
-  let hour = Number(match[1])
-  const minute = Number(match[2] ?? '0')
-  const period = match[3]?.toLowerCase()
-
-  if (minute > 59) return { value: null, error: 'Please send a valid time. For example: 10am or 14:30.' }
-  if (period === 'pm' && hour < 12) hour += 12
-  if (period === 'am' && hour === 12) hour = 0
-  if (!period && hour > 0 && hour < 8) {
-    return { value: null, error: 'Please include am or pm for that time. Outpatient hours are 8:00am to 4:00pm.' }
-  }
-  if (hour < 8 || hour > 16 || (hour === 16 && minute > 0)) {
-    return { value: null, error: 'Outpatient appointments are between 8:00am and 4:00pm. Please choose another time.' }
-  }
-
-  return { value: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`, error: null }
-}
-
-function parseCenter(message: string): ValidationResult<'Karu' | 'Galadimawa'> {
-  const lower = message.toLowerCase()
-  if (lower.includes('karu')) return { value: 'Karu', error: null }
-  if (lower.includes('galad') || lower.includes('royal homes')) return { value: 'Galadimawa', error: null }
-  return { value: null, error: 'Please choose one center: Karu or Galadimawa.' }
-}
-
-function parseOptionalEmail(message: string): ValidationResult<string> {
-  const cleaned = normalizeWhitespace(message).toLowerCase()
-  if (['skip', 'no', 'none', 'no email', 'not now', 'n/a', 'na'].includes(cleaned)) {
-    return { value: null, error: null }
-  }
-
-  const email = normalizeWhitespace(message)
-  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return { value: null, error: 'Please send a valid email address, or reply SKIP if you do not want email confirmation.' }
-  }
-
-  return { value: email, error: null }
-}
-
-function parseConfirmation(message: string): boolean | null {
-  const lower = message.trim().toLowerCase()
-  if (['yes', 'y', 'confirm', 'book it', 'proceed', 'ok', 'okay', 'sure', 'yes please'].some((word) => lower.includes(word))) return true
-  if (['no', 'n', 'cancel', 'stop', 'not now', 'decline'].some((word) => lower.includes(word))) return false
-  return null
-}
-
-function buildBookingSummary(session: Partial<BookingSessionRow>): string {
-  return `Please confirm these appointment details:\n\nName: ${session.collected_name ?? 'Not provided'}\nSex/Gender: ${session.collected_sex ?? 'Not provided'}\nLocation: ${session.collected_location ?? 'Not provided'}\nService: ${session.collected_service_type ?? 'Not provided'}\nDoctor: ${session.collected_doctor_preference ?? 'Any available doctor'}\nDate: ${session.collected_date ? formatDisplayDate(session.collected_date) : 'Not provided'}\nTime: ${session.collected_time?.slice(0, 5) ?? 'Not provided'}\nCenter: ${session.collected_center ?? 'Not provided'}\nEmail: ${session.collected_email ?? 'Not provided'}\n\nReply YES to submit this appointment request or NO to cancel.`
 }
 
 async function findPreferredDoctor(
@@ -2217,32 +2438,7 @@ async function findPreferredDoctor(
 
   if (!data || data.length === 0) return null
 
-  const normalizedPreference = normalizeDoctorMatchText(preference)
-  const drKAliases = ['dr k', 'doctor k', 'kunle', 'kune', 'adekunle', 'adesina', 'adeshina', 'adishina', 'akide', 'kunle adesina', 'kunle adeshina', 'adekunle adesina']
-  const shouldPreferDrK = drKAliases.some((alias) => normalizedPreference.includes(alias))
-
-  if (shouldPreferDrK) {
-    return (data as DoctorContact[]).find((doctor) => {
-      const normalizedName = normalizeDoctorMatchText(doctor.name)
-      return normalizedName.includes('adekunle') || (normalizedName.includes('kunle') && normalizedName.includes('adesina'))
-    }) ?? null
-  }
-
-  return (data as DoctorContact[]).find((doctor) => {
-    const normalizedName = normalizeDoctorMatchText(doctor.name)
-    return normalizedName.includes(normalizedPreference) ||
-      normalizedPreference.includes(normalizedName) ||
-      doctorNameAliases(doctor.name).some((alias) => normalizedPreference.includes(alias))
-  }) ?? null
-}
-
-function doctorNameAliases(name: string): string[] {
-  const normalizedName = normalizeDoctorMatchText(name)
-  if (normalizedName.includes('grace') && normalizedName.includes('ikeh')) return ['grace', 'ikeh', 'eke', 'grace ikeh', 'grace eke']
-  if (normalizedName.includes('nnajiofor') && normalizedName.includes('osondu')) return ['nnajiofor', 'osondu', 'dr osondu', 'osundu']
-  if (normalizedName.includes('olaleye') && normalizedName.includes('abiola')) return ['olaleye', 'abiola', 'olaleye abiola']
-  if (normalizedName.includes('julson') && normalizedName.includes('jeles')) return ['julson', 'jeles', 'julson jeles']
-  return []
+  return matchPreferredDoctor(preference, data as DoctorContact[])
 }
 
 async function hasDoctorSlotConflict(
@@ -2269,64 +2465,6 @@ async function sendTextMessageSafely(to: string, text: string, context: string):
   } catch (err) {
     console.error(`[ai-assistant] Twilio send failed for ${context}:`, err)
   }
-}
-
-function isCancelBooking(message: string): boolean {
-  const lower = message.toLowerCase().trim()
-  return ['cancel', 'stop booking', 'start over', 'abort', 'never mind', 'nevermind'].includes(lower)
-}
-
-function isAnyDoctorPreference(value: string): boolean {
-  const lower = value.toLowerCase()
-  return ['any', 'any doctor', 'any available doctor', 'no preference', 'anyone', 'no specific doctor'].some((phrase) => lower.includes(phrase))
-}
-
-function doctorServesCenter(location: string, center: string): boolean {
-  const normalizedLocation = normalizeDoctorMatchText(location)
-  const normalizedCenter = normalizeDoctorMatchText(center)
-  return normalizedLocation === 'both' || normalizedLocation.includes(normalizedCenter)
-}
-
-function normalizeDoctorMatchText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/\bdoctor\b/g, 'dr')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function normalizeWhitespace(value: string): string {
-  return value.replace(/\s+/g, ' ').trim()
-}
-
-function todayInLagos(): Date {
-  const lagosNow = new Date(Date.now() + 60 * 60 * 1000)
-  return new Date(Date.UTC(lagosNow.getUTCFullYear(), lagosNow.getUTCMonth(), lagosNow.getUTCDate()))
-}
-
-function makeUtcDate(year: number, month: number, day: number): Date | null {
-  const date = new Date(Date.UTC(year, month - 1, day))
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null
-  return date
-}
-
-function addDays(date: Date, days: number): Date {
-  return new Date(date.getTime() + days * 24 * 3600000)
-}
-
-function toIsoDate(date: Date): string {
-  return date.toISOString().split('T')[0]
-}
-
-function formatDisplayDate(isoDate: string): string {
-  return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString('en-NG', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    timeZone: 'Africa/Lagos',
-  })
 }
 
 async function triggerEmergencyAlert(

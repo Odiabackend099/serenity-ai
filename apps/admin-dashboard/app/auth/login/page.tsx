@@ -42,7 +42,11 @@ export default function LoginPage() {
     setLoading(true)
     setError(null)
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    const normalizedEmail = email.trim().toLowerCase()
+    const { error } = await supabase.auth.signInWithPassword({
+      email: normalizedEmail,
+      password,
+    })
 
     if (error) {
       setError(error.message)
@@ -84,8 +88,16 @@ export default function LoginPage() {
               id="email"
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value)
+                if (error) setError(null)
+              }}
               required
+              autoCapitalize="none"
+              autoCorrect="off"
+              autoComplete="username"
+              inputMode="email"
+              spellCheck={false}
               className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gold-400 focus:border-gold-500 outline-none transition"
               placeholder="admin@serenityroyalehospital.com"
             />
@@ -99,8 +111,12 @@ export default function LoginPage() {
               id="password"
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                setPassword(e.target.value)
+                if (error) setError(null)
+              }}
               required
+              autoComplete="current-password"
               className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gold-400 focus:border-gold-500 outline-none transition"
               placeholder="••••••••"
             />

@@ -366,6 +366,8 @@ function formatStaffCalendarSummary(status: string | null): string {
   switch (status) {
     case 'synced':
       return 'Synced with Google Calendar.'
+    case 'checked_available':
+      return 'Availability checked. Calendar event is not synced yet.'
     case 'pending_no_matched_doctor':
       return 'Doctor not assigned yet. Secretary should assign a doctor in the dashboard.'
     case 'pending_doctor_center_mismatch':

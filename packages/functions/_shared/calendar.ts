@@ -7,19 +7,20 @@
  * Events deleted in GCal are flagged for admin review, not auto-deleted from DB.
  */
 
+import {
+  buildAppointmentEventRequest,
+  buildFreeBusyRequest,
+  CENTER_ADDRESSES,
+  incrementTime,
+  type CalendarEventParams,
+} from './calendar-requests.ts'
+
 const GOOGLE_API_BASE = 'https://www.googleapis.com/calendar/v3'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const CALENDAR_ID = Deno.env.get('GOOGLE_CALENDAR_ID') ?? ''
 
 let _accessToken: string | null = null
 let _tokenExpiry = 0
-
-// Center addresses for calendar event descriptions
-const CENTER_ADDRESSES: Record<string, string> = {
-  Karu: 'No. 11 Ali Amodu Close (behind CBN Quarters), Karu, Abuja',
-  Galadimawa: 'No. 10 Royal Homes Estate, Galadinmawa, Abuja',
-  Both: 'Serenity Royale Hospital, Abuja',
-}
 
 interface ServiceAccountKey {
   client_email: string
@@ -123,52 +124,12 @@ async function calendarRequest(method: string, path: string, body?: unknown): Pr
   return res.json()
 }
 
-export interface CalendarEventParams {
-  patientName: string
-  patientPhone: string
-  doctorName: string
-  serviceType: string
-  center: string
-  appointmentDate: string // YYYY-MM-DD
-  appointmentTime: string // HH:MM
-  reason?: string
-}
-
 /**
  * Create a Google Calendar event for an appointment.
  * Returns the event ID for storage in appointments table.
  */
 export async function createAppointmentEvent(params: CalendarEventParams): Promise<string> {
-  const startDateTime = `${params.appointmentDate}T${params.appointmentTime}:00`
-  // Default appointment duration: 1 hour
-  const endTime = incrementTime(params.appointmentTime, 60)
-  const endDateTime = `${params.appointmentDate}T${endTime}:00`
-
-  const address = CENTER_ADDRESSES[params.center] ?? params.center
-
-  const event = await calendarRequest('POST', `/calendars/${encodeURIComponent(CALENDAR_ID)}/events`, {
-    summary: `${params.serviceType.replace('_', ' ')} — ${params.patientName}`,
-    description: [
-      `Patient: ${params.patientName}`,
-      `Phone: ${params.patientPhone}`,
-      `Service: ${params.serviceType.replace('_', ' ')}`,
-      `Doctor: ${params.doctorName}`,
-      `Center: ${params.center}`,
-      params.reason ? `Reason: ${params.reason}` : '',
-      '',
-      'Booked via Serenity AI WhatsApp System',
-    ].filter(Boolean).join('\n'),
-    location: address,
-    start: { dateTime: startDateTime, timeZone: 'Africa/Lagos' },
-    end: { dateTime: endDateTime, timeZone: 'Africa/Lagos' },
-    reminders: {
-      useDefault: false,
-      overrides: [
-        { method: 'email', minutes: 24 * 60 },
-        { method: 'popup', minutes: 30 },
-      ],
-    },
-  }) as { id: string }
+  const event = await calendarRequest('POST', `/calendars/${encodeURIComponent(CALENDAR_ID)}/events`, buildAppointmentEventRequest(params)) as { id: string }
 
   return event.id
 }
@@ -213,18 +174,10 @@ export async function checkCalendarConflict(
   time: string,
   durationMinutes = 60,
 ): Promise<boolean> {
-  const startDateTime = `${date}T${time}:00+01:00`
-  const endDateTime = `${date}T${incrementTime(time, durationMinutes)}:00+01:00`
-
   const data = await calendarRequest(
     'POST',
     '/freeBusy',
-    {
-      timeMin: startDateTime,
-      timeMax: endDateTime,
-      timeZone: 'Africa/Lagos',
-      items: [{ id: CALENDAR_ID }],
-    },
+    buildFreeBusyRequest(CALENDAR_ID, date, time, durationMinutes),
   ) as { calendars?: Record<string, { busy?: unknown[]; errors?: Array<{ reason?: string; domain?: string }> }> }
 
   const calendar = data.calendars?.[CALENDAR_ID]
@@ -233,15 +186,4 @@ export async function checkCalendarConflict(
   }
 
   return (calendar?.busy?.length ?? 0) > 0
-}
-
-/**
- * Add minutes to a HH:MM time string. Returns HH:MM.
- */
-function incrementTime(time: string, minutes: number): string {
-  const [h, m] = time.split(':').map(Number)
-  const total = h * 60 + m + minutes
-  const newH = Math.floor(total / 60) % 24
-  const newM = total % 60
-  return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`
 }

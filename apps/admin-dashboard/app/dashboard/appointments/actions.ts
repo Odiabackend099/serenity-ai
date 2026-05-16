@@ -2,31 +2,21 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { confirmAppointmentWithDeps, type ConfirmAppointmentResult } from '@/lib/appointment-actions-flow'
+import { callInternalEdgeFunction } from '@/lib/edge-functions'
+import { DashboardActionError, requireDashboardUser, type DashboardRole } from '@/lib/dashboard-action-auth'
+import {
+  buildManualReminderPayload,
+  markReminderFailedPayload,
+  markReminderSentPayload,
+  reminderMetadata,
+  reminderNoticeForStatus,
+  type ManualReminderType,
+} from '@/lib/appointment-reminder-flow'
 
 type AppointmentStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
 
-function getInternalFunctionConfig() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!supabaseUrl || !serviceKey) return null
-  return { supabaseUrl, serviceKey }
-}
-
-async function callNotificationFunction(payload: Record<string, unknown>): Promise<Response | null> {
-  const config = getInternalFunctionConfig()
-  if (!config) return null
-
-  return fetch(`${config.supabaseUrl}/functions/v1/send-notification`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${config.serviceKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  })
-}
+const APPOINTMENT_ACTION_ROLES: DashboardRole[] = ['super_admin', 'admin', 'doctor', 'staff']
 
 function appointmentNoticeUrl(appointmentId: string, notice: string): string {
   return `/dashboard/appointments?appointment=${encodeURIComponent(appointmentId)}&notice=${encodeURIComponent(notice)}`
@@ -45,9 +35,21 @@ function confirmationNotice(result: ConfirmAppointmentResult): string {
   }
 }
 
+async function requireAppointmentActionUser(appointmentId: string) {
+  try {
+    return await requireDashboardUser(APPOINTMENT_ACTION_ROLES)
+  } catch (err) {
+    if (err instanceof DashboardActionError) {
+      console.error(`[appointments] action blocked (${err.code}):`, err.message)
+      redirect(appointmentNoticeUrl(appointmentId, err.code === 'not_authenticated' ? 'not-signed-in' : 'not-authorized'))
+    }
+    throw err
+  }
+}
+
 export async function confirmAppointment(appointmentId: string, formData?: FormData): Promise<void> {
   const doctorId = formData?.get('doctor_id')?.toString() || null
-  const supabase = await createServerSupabaseClient()
+  const { supabase } = await requireAppointmentActionUser(appointmentId)
   const result = await confirmAppointmentWithDeps(appointmentId, doctorId, {
     assignDoctor: async (id, selectedDoctorId) => {
       const { error } = await supabase
@@ -77,11 +79,11 @@ export async function confirmAppointment(appointmentId: string, formData?: FormD
       if (error) throw new Error(error.message)
     },
     callNotificationFunction: async (payload) => {
-      const res = await callNotificationFunction(payload)
+      const res = await callInternalEdgeFunction('send-notification', payload)
       if (!res) return null
       return {
         ok: res.ok,
-        errorText: res.ok ? undefined : await res.text().catch(() => res.statusText),
+        errorText: res.errorText,
       }
     },
     logError: (message, error) => console.error(message, error),
@@ -97,7 +99,7 @@ export async function updateAppointmentStatus(
   appointmentId: string,
   status: AppointmentStatus,
 ): Promise<void> {
-  const supabase = await createServerSupabaseClient()
+  const { supabase } = await requireAppointmentActionUser(appointmentId)
 
   if (status === 'confirmed') {
     const { data: appointment, error: lookupError } = await supabase
@@ -144,7 +146,7 @@ export async function updateAppointmentStatus(
 }
 
 export async function cancelAppointment(appointmentId: string): Promise<void> {
-  const supabase = await createServerSupabaseClient()
+  const { supabase } = await requireAppointmentActionUser(appointmentId)
 
   // Get calendar event ID before cancelling
   const { data: appt } = await supabase
@@ -168,7 +170,7 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
   if (appt?.google_calendar_event_id) {
     try {
       const patient = appt.patients as { name?: string; phone_number?: string } | null
-      await callNotificationFunction({
+      await callInternalEdgeFunction('send-notification', {
         type: 'appointment_cancellation',
         calendarEventId: appt.google_calendar_event_id,
         patientPhone: patient?.phone_number,
@@ -186,61 +188,104 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
 
 export async function sendManualReminder(
   appointmentId: string,
-  reminderType: '24h' | '1week',
+  reminderType: ManualReminderType,
 ): Promise<void> {
-  const supabase = await createServerSupabaseClient()
+  const { supabase } = await requireAppointmentActionUser(appointmentId)
 
-  const { data: appt } = await supabase
+  const { data: appt, error: lookupError } = await supabase
     .from('appointments')
     .select('*, patients(name, phone_number), doctors(name)')
     .eq('id', appointmentId)
     .single()
 
-  if (!appt) return
+  if (lookupError || !appt) {
+    if (lookupError) console.error('[appointments] reminder lookup failed:', lookupError.message)
+    redirect(appointmentNoticeUrl(appointmentId, reminderNoticeForStatus('not_found')))
+  }
+
+  if (appt.status !== 'confirmed' || !appt.doctor_id) {
+    redirect(appointmentNoticeUrl(appointmentId, reminderNoticeForStatus('not_confirmed')))
+  }
+
+  const today = new Date().toISOString().split('T')[0]
+  if (appt.appointment_date < today) {
+    redirect(appointmentNoticeUrl(appointmentId, reminderNoticeForStatus('past_appointment')))
+  }
 
   const patient = appt.patients as { name?: string; phone_number?: string } | null
   const doctor = appt.doctors as { name?: string } | null
-  const phone = patient?.phone_number?.replace('+', '')
-
-  if (!phone) {
-    redirect(appointmentNoticeUrl(appointmentId, 'missing-phone'))
-  }
-
-  const config = getInternalFunctionConfig()
-  if (!config) {
-    redirect(appointmentNoticeUrl(appointmentId, 'notification-issue'))
-  }
-
-  const res = await fetch(`${config.supabaseUrl}/functions/v1/appointment-reminder`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${config.serviceKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      manual: true,
-      appointmentId,
-      reminderType,
-      phone,
-      patientName: patient?.name ?? 'Patient',
-      appointmentDate: appt.appointment_date,
-      appointmentTime: appt.appointment_time?.slice(0, 5) ?? '09:00',
-      center: appt.center ?? 'Galadimawa',
-      doctorName: doctor?.name ?? 'Dr. Kunle Adesina',
-    }),
+  const payload = buildManualReminderPayload({
+    appointmentId,
+    reminderType,
+    patientPhone: patient?.phone_number ?? '',
+    patientName: patient?.name,
+    appointmentDate: appt.appointment_date,
+    appointmentTime: appt.appointment_time,
+    center: appt.center,
+    doctorName: doctor?.name,
   })
 
-  if (!res.ok) {
-    console.error('[appointments] manual reminder failed:', await res.text().catch(() => res.statusText))
-    redirect(appointmentNoticeUrl(appointmentId, 'notification-issue'))
-    return
+  if (!payload.phone) {
+    redirect(appointmentNoticeUrl(appointmentId, reminderNoticeForStatus('missing_phone')))
   }
 
-  // Mark the reminder as sent
-  const updateField = reminderType === '24h' ? 'reminder_24h_sent' : 'reminder_1week_sent'
-  await supabase.from('appointments').update({ [updateField]: true }).eq('id', appointmentId)
+  const res = await callInternalEdgeFunction('appointment-reminder', payload)
+  if (!res) {
+    await markReminderFailedIfSupported(supabase, appointmentId, reminderType)
+    redirect(appointmentNoticeUrl(appointmentId, reminderNoticeForStatus('function_unavailable')))
+  }
+
+  if (!res.ok) {
+    console.error('[appointments] manual reminder failed:', res.errorText ?? res.statusText)
+    await markReminderFailedIfSupported(supabase, appointmentId, reminderType)
+    redirect(appointmentNoticeUrl(appointmentId, reminderNoticeForStatus('provider_failed')))
+  }
+
+  const sentAt = new Date().toISOString()
+  const { error: updateError } = await supabase
+    .from('appointments')
+    .update(markReminderSentPayload(reminderType, sentAt))
+    .eq('id', appointmentId)
+
+  if (updateError) {
+    console.error('[appointments] reminder sent but database update failed:', updateError.message)
+    redirect(appointmentNoticeUrl(appointmentId, reminderNoticeForStatus('update_failed')))
+  }
+
+  const reminder = reminderMetadata(reminderType)
+  const { error: notificationLogError } = await supabase.from('notifications').insert({
+    patient_id: appt.patient_id,
+    appointment_id: appointmentId,
+    notification_type: reminder.notificationType,
+    channel: 'whatsapp',
+    message_content: `${reminder.label} sent manually from dashboard`,
+    status: 'sent',
+    sent_at: sentAt,
+  })
+
+  if (notificationLogError) {
+    console.error('[appointments] reminder notification log failed:', notificationLogError.message)
+  }
 
   revalidatePath('/dashboard/appointments')
   revalidatePath('/dashboard')
-  redirect(appointmentNoticeUrl(appointmentId, 'reminder-sent'))
+  redirect(appointmentNoticeUrl(appointmentId, reminderNoticeForStatus('sent', reminderType)))
+}
+
+async function markReminderFailedIfSupported(
+  supabase: Awaited<ReturnType<typeof requireDashboardUser>>['supabase'],
+  appointmentId: string,
+  reminderType: ManualReminderType,
+): Promise<void> {
+  const failedUpdate = markReminderFailedPayload(reminderType)
+  if (Object.keys(failedUpdate).length === 0) return
+
+  const { error } = await supabase
+    .from('appointments')
+    .update(failedUpdate)
+    .eq('id', appointmentId)
+
+  if (error) {
+    console.error('[appointments] reminder failure status update failed:', error.message)
+  }
 }

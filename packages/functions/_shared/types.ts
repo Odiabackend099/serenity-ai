@@ -61,6 +61,11 @@ export interface BookingSessionRow {
   collected_time: string | null
   collected_center: string | null
   collected_email: string | null
+  availability_status?: string | null
+  availability_checked_at?: string | null
+  availability_doctor_id?: string | null
+  availability_alternatives?: unknown
+  held_slot_id?: string | null
   last_message_at: string
   completed_at: string | null
   created_at: string
@@ -103,7 +108,13 @@ export interface AppointmentRow {
   calendar_sync_status: string | null
   calendar_sync_error: string | null
   reminder_1week_sent: boolean
+  reminder_1week_sent_at?: string | null
+  reminder_1week_status?: string | null
   reminder_24h_sent: boolean
+  reminder_24h_sent_at?: string | null
+  reminder_24h_status?: string | null
+  reminder_2h_sent?: boolean
+  reminder_2h_sent_at?: string | null
   created_at: string
 }
 
@@ -131,8 +142,8 @@ export const BOOKING_STEPS = {
   DOCTOR: 4,
   DATE: 5,
   TIME: 6,
-  CENTER: 7,
-  EMAIL: 8,
+  EMAIL: 7,
+  CENTER: 8,
   CONFIRM: 9,
 } as const
 

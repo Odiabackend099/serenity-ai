@@ -1,9 +1,15 @@
 /**
- * Twilio-only WhatsApp helpers.
+ * WhatsApp helpers.
  *
- * All WhatsApp traffic goes through Twilio Programmable Messaging using
- * whatsapp: E.164 addresses. Other WhatsApp providers are intentionally unsupported.
+ * Meta Cloud API is the live provider when WHATSAPP_PROVIDER=meta.
+ * Twilio remains supported as a backup provider.
  */
+
+type WhatsAppProvider = 'twilio' | 'meta'
+
+function getWhatsAppProvider(): WhatsAppProvider {
+  return Deno.env.get('WHATSAPP_PROVIDER') === 'meta' ? 'meta' : 'twilio'
+}
 
 function getTwilioConfig(): { accountSid: string; authToken: string; whatsappFrom: string } {
   const accountSid = Deno.env.get('TWILIO_ACCOUNT_SID')
@@ -53,11 +59,51 @@ async function sendTwilioWhatsApp(to: string, text: string): Promise<string> {
   return data.sid ?? ''
 }
 
+async function sendMetaWhatsApp(to: string, text: string): Promise<string> {
+  const phoneNumberId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID')
+  const accessToken = Deno.env.get('WHATSAPP_PERMANENT_ACCESS_TOKEN')
+    ?? Deno.env.get('WHATSAPP_API_TOKEN')
+    ?? Deno.env.get('META_WHATSAPP_ACCESS_TOKEN')
+
+  if (!phoneNumberId || !accessToken) {
+    throw new Error('Meta WhatsApp is not configured — set WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_PERMANENT_ACCESS_TOKEN')
+  }
+
+  const apiVersion = Deno.env.get('META_GRAPH_API_VERSION') ?? Deno.env.get('WHATSAPP_API_VERSION') ?? 'v21.0'
+  const res = await fetch(`https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: normalizeMetaRecipient(to),
+      type: 'text',
+      text: {
+        preview_url: false,
+        body: text,
+      },
+    }),
+  })
+
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Meta WhatsApp send failed (${res.status}): ${err}`)
+  }
+
+  const data = await res.json() as { messages?: Array<{ id?: string }> }
+  return data.messages?.[0]?.id ?? ''
+}
+
 /**
- * Send a plain text WhatsApp message through Twilio.
+ * Send a plain text WhatsApp message through the configured provider.
  */
 export async function sendTextMessage(to: string, text: string): Promise<string> {
-  return sendTwilioWhatsApp(to, text)
+  return getWhatsAppProvider() === 'meta'
+    ? sendMetaWhatsApp(to, text)
+    : sendTwilioWhatsApp(to, text)
 }
 
 /**
@@ -111,6 +157,10 @@ export async function verifyTwilioWebhookSignature(
   return expected === signatureHeader
 }
 
+function normalizeMetaRecipient(phone: string): string {
+  return phone.replace(/^whatsapp:/, '').replace(/[^\d]/g, '')
+}
+
 export async function sendAppointmentReminder1Week(
   to: string,
   patientName: string,
@@ -135,6 +185,19 @@ export async function sendAppointmentReminder24h(
   return sendTextMessage(
     to,
     `Dear ${patientName}, this is a 24-hour reminder for your Serenity Royale Hospital appointment.\n\nDate: ${appointmentDate}\nTime: ${appointmentTime}\nCenter: ${center}\n\nPlease arrive 10-15 minutes early. To reschedule, reply here or call +234 806 219 7384.`,
+  )
+}
+
+export async function sendAppointmentReminder2h(
+  to: string,
+  patientName: string,
+  appointmentDate: string,
+  appointmentTime: string,
+  center: string,
+): Promise<string> {
+  return sendTextMessage(
+    to,
+    `Dear ${patientName}, this is a 2-hour reminder for your Serenity Royale Hospital appointment.\n\nDate: ${appointmentDate}\nTime: ${appointmentTime}\nCenter: ${center}\n\nPlease arrive 10-15 minutes early. To reschedule, reply here or call +234 806 219 7384.`,
   )
 }
 

@@ -1,4 +1,9 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import WhatsAppShareCard from '@/components/dashboard/WhatsAppShareCard'
+import {
+  LIVE_AI_WHATSAPP_DISPLAY,
+  LIVE_AI_WHATSAPP_URL,
+} from '@/lib/whatsapp-share'
 import { format } from 'date-fns'
 import { redirect } from 'next/navigation'
 import {
@@ -12,7 +17,12 @@ import {
   deactivateAdminUser,
 } from './actions'
 
-export default async function SettingsPage() {
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ notice?: string }>
+}) {
+  const resolvedSearchParams = searchParams ? await searchParams : {}
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   const { data: staffUser } = await supabase
@@ -59,7 +69,6 @@ export default async function SettingsPage() {
   const activeDoctors = doctors?.filter((d) => d.is_active) ?? []
   const inactiveDoctors = doctors?.filter((d) => !d.is_active) ?? []
   const whatsappProvider = process.env.WHATSAPP_PROVIDER ?? 'meta'
-  const liveWhatsAppSender = '+234 702 674 3998'
   const readinessItems = [
     {
       label: 'Meta WhatsApp live number',
@@ -100,6 +109,8 @@ export default async function SettingsPage() {
         <p className="text-gray-500 text-sm">Hospital setup, doctors, on-call schedule, staff access, and connected services.</p>
       </div>
 
+      <SettingsNoticeBanner notice={resolvedSearchParams.notice} />
+
       <div className="space-y-8">
 
         <section className="bg-white rounded-lg border border-gray-200 p-6">
@@ -132,7 +143,7 @@ export default async function SettingsPage() {
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
             <div>
               <p className="text-gray-500 text-xs mb-0.5">Live patient number</p>
-              <p className="text-gray-800 font-medium">{liveWhatsAppSender}</p>
+              <p className="text-gray-800 font-medium">{LIVE_AI_WHATSAPP_DISPLAY}</p>
             </div>
             <div>
               <p className="text-gray-500 text-xs mb-0.5">Backup provider</p>
@@ -151,6 +162,8 @@ export default async function SettingsPage() {
             Live Meta messaging is the expected setting. Switch to Twilio only for a planned backup procedure.
           </div>
         </section>
+
+        <WhatsAppShareCard shareUrl={LIVE_AI_WHATSAPP_URL} />
 
         {/* ── Hospital Information ───────────────────────────────────────── */}
         <section className="bg-white rounded-lg border border-gray-200 p-6">
@@ -634,6 +647,40 @@ function readinessTone(tone: string) {
     default:
       return 'border-amber-100 bg-amber-50 text-amber-700'
   }
+}
+
+function SettingsNoticeBanner({ notice }: { notice?: string }) {
+  if (!notice) return null
+
+  const messages: Record<string, { title: string; detail: string; tone: 'green' | 'amber' | 'red' }> = {
+    'doctor-added': { title: 'Doctor added', detail: 'The doctor is now available in hospital setup.', tone: 'green' },
+    'doctor-updated': { title: 'Doctor updated', detail: 'The doctor details were saved.', tone: 'green' },
+    'doctor-deactivated': { title: 'Doctor hidden', detail: 'The doctor will no longer appear as active for new setup choices.', tone: 'amber' },
+    'doctor-reactivated': { title: 'Doctor restored', detail: 'The doctor is active again.', tone: 'green' },
+    'doctor-missing-name': { title: 'Doctor name needed', detail: 'Enter the doctor name before saving.', tone: 'amber' },
+    'schedule-added': { title: 'On-call schedule saved', detail: 'The schedule was added.', tone: 'green' },
+    'schedule-removed': { title: 'On-call schedule removed', detail: 'The schedule was removed.', tone: 'green' },
+    'schedule-missing-fields': { title: 'Schedule details needed', detail: 'Choose a doctor and date range before saving.', tone: 'amber' },
+    'schedule-date-error': { title: 'Check the date range', detail: 'The end date cannot be before the start date.', tone: 'amber' },
+    'staff-added': { title: 'Staff access saved', detail: 'The staff account was added to hospital setup.', tone: 'green' },
+    'staff-reactivated': { title: 'Staff access restored', detail: 'The staff account is active again.', tone: 'green' },
+    'staff-deactivated': { title: 'Staff access removed', detail: 'The staff account is no longer active.', tone: 'green' },
+    'staff-already-active': { title: 'Staff already active', detail: 'That staff account already has access.', tone: 'amber' },
+    'staff-missing-fields': { title: 'Staff details needed', detail: 'Enter the staff name and email before saving.', tone: 'amber' },
+    'cannot-deactivate-self': { title: 'Cannot remove your own access', detail: 'Ask another lead admin to change your account.', tone: 'amber' },
+    'not-authorized': { title: 'Action not available', detail: 'Only lead admins can change hospital setup.', tone: 'red' },
+    'not-signed-in': { title: 'Please sign in again', detail: 'Your session ended before the change was saved.', tone: 'amber' },
+    'could-not-save': { title: 'Could not save that change', detail: 'Please try again. If it repeats, ask support to check the dashboard logs.', tone: 'red' },
+  }
+  const message = messages[notice]
+  if (!message) return null
+
+  return (
+    <div className={`mb-5 rounded-md border px-4 py-3 ${readinessTone(message.tone)}`}>
+      <p className="text-sm font-semibold">{message.title}</p>
+      <p className="mt-0.5 text-xs opacity-80">{message.detail}</p>
+    </div>
+  )
 }
 
 function staffRoleLabel(role: string | null) {

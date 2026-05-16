@@ -3,7 +3,12 @@ import { format } from 'date-fns'
 import { acknowledgeAlert, resolveAlert } from './actions'
 import EmergencyRealtimeRefresher from '@/components/dashboard/EmergencyRealtimeRefresher'
 
-export default async function EmergenciesPage() {
+export default async function EmergenciesPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ notice?: string }>
+}) {
+  const resolvedSearchParams = searchParams ? await searchParams : {}
   const supabase = await createServerSupabaseClient()
 
   const { data: alerts } = await supabase
@@ -44,6 +49,8 @@ export default async function EmergenciesPage() {
         <h1 className="text-2xl font-bold text-gray-900">Urgent Messages</h1>
         <p className="text-gray-500 text-sm">Urgent patient messages that need immediate staff attention. This page auto-refreshes.</p>
       </div>
+
+      <EmergencyNoticeBanner notice={resolvedSearchParams.notice} />
 
       {/* Unresolved Alerts */}
       {unresolved.length > 0 && (
@@ -250,4 +257,30 @@ function isInternalTestAlert(alert: { alert_message?: string | null; response_no
     || text.includes('twilio two-way verification')
     || text.startsWith('qa ')
     || text.includes('health check')
+}
+
+function EmergencyNoticeBanner({ notice }: { notice?: string }) {
+  if (!notice) return null
+
+  const messages: Record<string, { title: string; detail: string; tone: 'green' | 'amber' | 'red' }> = {
+    'alert-seen': { title: 'Urgent message marked seen', detail: 'The alert is still open until it is marked resolved.', tone: 'green' },
+    'alert-resolved': { title: 'Urgent message resolved', detail: 'The alert has been closed with the saved response notes.', tone: 'green' },
+    'not-authorized': { title: 'Action not available', detail: 'Your staff account does not have permission to change urgent messages.', tone: 'red' },
+    'not-signed-in': { title: 'Please sign in again', detail: 'Your session ended before the change was saved.', tone: 'amber' },
+    'could-not-save': { title: 'Could not save that change', detail: 'Please try again. If it repeats, ask a manager to review.', tone: 'red' },
+  }
+  const message = messages[notice]
+  if (!message) return null
+  const className = message.tone === 'green'
+    ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
+    : message.tone === 'red'
+      ? 'border-red-100 bg-red-50 text-red-700'
+      : 'border-amber-100 bg-amber-50 text-amber-700'
+
+  return (
+    <div className={`mb-5 rounded-md border px-4 py-3 ${className}`}>
+      <p className="text-sm font-semibold">{message.title}</p>
+      <p className="mt-0.5 text-xs opacity-80">{message.detail}</p>
+    </div>
+  )
 }

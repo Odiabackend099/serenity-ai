@@ -366,6 +366,10 @@ deno_version = 2
 enabled = true
 verify_jwt = false
 
+[functions.meta-whatsapp-webhook]
+enabled = true
+verify_jwt = false
+
 [functions.ai-assistant]
 enabled = true
 verify_jwt = false

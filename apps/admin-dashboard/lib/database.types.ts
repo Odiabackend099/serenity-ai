@@ -186,6 +186,11 @@ export interface Database {
           collected_time: string | null
           collected_center: string | null
           collected_email: string | null
+          availability_status: string | null
+          availability_checked_at: string | null
+          availability_doctor_id: string | null
+          availability_alternatives: Json
+          held_slot_id: string | null
           validation_errors: Json
           step_history: Json
           message_attempts: number
@@ -196,6 +201,23 @@ export interface Database {
         }
         Insert: Omit<Database['public']['Tables']['booking_sessions']['Row'], 'id' | 'created_at'>
         Update: Partial<Database['public']['Tables']['booking_sessions']['Insert']>
+      }
+      appointment_slot_holds: {
+        Row: {
+          id: string
+          patient_id: string | null
+          booking_session_id: string | null
+          doctor_id: string
+          appointment_date: string
+          appointment_time: string
+          duration_minutes: number
+          status: 'active' | 'consumed' | 'expired' | 'released'
+          expires_at: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: Omit<Database['public']['Tables']['appointment_slot_holds']['Row'], 'id' | 'created_at' | 'updated_at'>
+        Update: Partial<Database['public']['Tables']['appointment_slot_holds']['Insert']>
       }
       message_queue: {
         Row: {

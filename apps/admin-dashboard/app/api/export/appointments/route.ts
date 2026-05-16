@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 
 export async function GET(request: Request) {
+  if (!await hasSupabaseAuthCookie()) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   const supabase = await createServerSupabaseClient()
 
   const { data: { user } } = await supabase.auth.getUser()
@@ -66,6 +71,11 @@ export async function GET(request: Request) {
       'Content-Disposition': `attachment; filename="appointments-${dateTag}.csv"`,
     },
   })
+}
+
+async function hasSupabaseAuthCookie(): Promise<boolean> {
+  const cookieStore = await cookies()
+  return cookieStore.getAll().some((cookie) => cookie.name.startsWith('sb-') && cookie.name.includes('auth-token'))
 }
 
 function sanitizeExportReason(reason: string | null): string {
