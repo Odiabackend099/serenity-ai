@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { QRCodeCanvas } from 'qrcode.react'
+import { QRCodeCanvas, QRCodeSVG } from 'qrcode.react'
 
 type WhatsAppShareCardProps = {
   shareUrl: string
@@ -10,16 +10,23 @@ type WhatsAppShareCardProps = {
 export default function WhatsAppShareCard({ shareUrl }: WhatsAppShareCardProps) {
   const qrWrapperRef = useRef<HTMLDivElement | null>(null)
   const [copyLabel, setCopyLabel] = useState('Copy link')
+  const [printLabel, setPrintLabel] = useState('Print')
 
   useEffect(() => {
-    if (copyLabel === 'Copy link') return
-
+    if (copyLabel === 'Copy link') return undefined
     const timer = window.setTimeout(() => {
       setCopyLabel('Copy link')
     }, 2000)
-
     return () => window.clearTimeout(timer)
   }, [copyLabel])
+
+  useEffect(() => {
+    if (printLabel === 'Print') return undefined
+    const timer = window.setTimeout(() => {
+      setPrintLabel('Print')
+    }, 2000)
+    return () => window.clearTimeout(timer)
+  }, [printLabel])
 
   function getCanvas(): HTMLCanvasElement | null {
     return qrWrapperRef.current?.querySelector('canvas') ?? null
@@ -45,68 +52,8 @@ export default function WhatsAppShareCard({ shareUrl }: WhatsAppShareCardProps) 
   }
 
   function handlePrint() {
-    const canvas = getCanvas()
-    if (!canvas) return
-
-    const dataUrl = canvas.toDataURL('image/png')
-    const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=720,height=900')
-    if (!printWindow) return
-
-    printWindow.document.write(`
-      <!doctype html>
-      <html lang="en">
-        <head>
-          <meta charset="utf-8" />
-          <title>Dr. Adekunle WhatsApp QR</title>
-          <style>
-            body {
-              font-family: Arial, sans-serif;
-              margin: 0;
-              padding: 32px;
-              color: #111827;
-              text-align: center;
-            }
-            .card {
-              max-width: 520px;
-              margin: 0 auto;
-              border: 1px solid #d1d5db;
-              border-radius: 16px;
-              padding: 24px;
-            }
-            img {
-              width: 320px;
-              height: 320px;
-              max-width: 100%;
-            }
-            h1 {
-              margin: 0 0 12px;
-              font-size: 28px;
-            }
-            p {
-              margin: 8px 0;
-              line-height: 1.5;
-            }
-            .link {
-              word-break: break-all;
-              font-size: 14px;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="card">
-            <h1>Dr. Adekunle's AI Chat QR</h1>
-            <p>Scan to start chatting with Serenity Royale Hospital AI on WhatsApp.</p>
-            <img src="${dataUrl}" alt="Dr. Adekunle WhatsApp QR code" />
-            <p class="link">${shareUrl}</p>
-          </div>
-        </body>
-      </html>
-    `)
-    printWindow.document.close()
-    printWindow.focus()
-    window.setTimeout(() => {
-      printWindow.print()
-    }, 250)
+    setPrintLabel('Print ready')
+    window.requestAnimationFrame(() => window.print())
   }
 
   return (
@@ -165,7 +112,7 @@ export default function WhatsAppShareCard({ shareUrl }: WhatsAppShareCardProps) 
               onClick={handlePrint}
               className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
             >
-              Print
+              {printLabel}
             </button>
           </div>
 
@@ -174,6 +121,105 @@ export default function WhatsAppShareCard({ shareUrl }: WhatsAppShareCardProps) 
           </p>
         </div>
       </div>
+      <div
+        id="dr-adekunle-qr-print"
+        data-testid="qr-print-card"
+        aria-hidden="true"
+        className="hidden"
+      >
+        <div className="qr-print-card">
+          <p className="qr-print-eyebrow">Serenity Royale Hospital</p>
+          <h1>Dr. Adekunle&apos;s AI Chat</h1>
+          <p className="qr-print-copy">
+            Scan this QR code to start a WhatsApp chat with the hospital booking assistant.
+          </p>
+          <QRCodeSVG
+            value={shareUrl}
+            size={340}
+            marginSize={3}
+            level="H"
+            bgColor="#ffffff"
+            fgColor="#111827"
+          />
+          <p className="qr-print-link">{shareUrl}</p>
+        </div>
+      </div>
+      <style>{`
+        @media screen {
+          #dr-adekunle-qr-print {
+            display: none;
+          }
+        }
+
+        @media print {
+          body * {
+            visibility: hidden !important;
+          }
+
+          #dr-adekunle-qr-print,
+          #dr-adekunle-qr-print * {
+            visibility: visible !important;
+          }
+
+          #dr-adekunle-qr-print {
+            display: flex !important;
+            position: fixed;
+            inset: 0;
+            align-items: center;
+            justify-content: center;
+            background: white;
+            padding: 24mm;
+            color: #111827;
+          }
+
+          #dr-adekunle-qr-print .qr-print-card {
+            width: 148mm;
+            min-height: 190mm;
+            border: 1px solid #d1d5db;
+            border-radius: 12px;
+            padding: 18mm 14mm;
+            text-align: center;
+            font-family: Arial, sans-serif;
+          }
+
+          #dr-adekunle-qr-print .qr-print-eyebrow {
+            margin: 0 0 8px;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #047857;
+          }
+
+          #dr-adekunle-qr-print h1 {
+            margin: 0;
+            font-size: 30px;
+            line-height: 1.2;
+          }
+
+          #dr-adekunle-qr-print .qr-print-copy {
+            margin: 12px auto 22px;
+            max-width: 420px;
+            font-size: 15px;
+            line-height: 1.45;
+            color: #374151;
+          }
+
+          #dr-adekunle-qr-print svg {
+            width: 95mm;
+            height: 95mm;
+          }
+
+          #dr-adekunle-qr-print .qr-print-link {
+            margin: 22px auto 0;
+            max-width: 440px;
+            overflow-wrap: anywhere;
+            font-size: 11px;
+            line-height: 1.4;
+            color: #374151;
+          }
+        }
+      `}</style>
     </section>
   )
 }

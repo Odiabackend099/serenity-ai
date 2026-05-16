@@ -64,9 +64,10 @@ serve(async (req: Request) => {
 
     try {
       const formattedDate = format(new Date(appointmentDate + 'T00:00:00'), 'EEEE, MMMM d, yyyy')
+      let externalMessageId = ''
 
       if (reminderType === '1week') {
-        await sendAppointmentReminder1Week(
+        externalMessageId = await sendAppointmentReminder1Week(
           phone,
           patientName ?? 'Patient',
           formattedDate,
@@ -75,7 +76,7 @@ serve(async (req: Request) => {
           doctorName ?? 'Dr. Kunle Adesina',
         )
       } else if (reminderType === '24h') {
-        await sendAppointmentReminder24h(
+        externalMessageId = await sendAppointmentReminder24h(
           phone,
           patientName ?? 'Patient',
           formattedDate,
@@ -83,7 +84,7 @@ serve(async (req: Request) => {
           center ?? 'Galadimawa',
         )
       } else {
-        await sendAppointmentReminder2h(
+        externalMessageId = await sendAppointmentReminder2h(
           phone,
           patientName ?? 'Patient',
           formattedDate,
@@ -98,6 +99,7 @@ serve(async (req: Request) => {
         reminderType,
         appointmentId,
         notificationType: reminderNotificationType(reminderType),
+        externalMessageId,
       })
     } catch (err) {
       console.error(`[appointment-reminder] Manual ${reminderType} reminder failed:`, (err as Error).message)

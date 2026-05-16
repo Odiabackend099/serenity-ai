@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation'
 import { confirmAppointmentWithDeps, type ConfirmAppointmentResult } from '@/lib/appointment-actions-flow'
 import { callInternalEdgeFunction } from '@/lib/edge-functions'
 import { DashboardActionError, requireDashboardUser, type DashboardRole } from '@/lib/dashboard-action-auth'
+import { createAdminSupabaseClient } from '@/lib/supabase-admin'
 import {
   buildManualReminderPayload,
   markReminderFailedPayload,
@@ -13,6 +14,7 @@ import {
   reminderNoticeForStatus,
   type ManualReminderType,
 } from '@/lib/appointment-reminder-flow'
+import { buildReminderNotificationAuditRecord } from '@/lib/reminder-notification-audit'
 
 type AppointmentStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
 
@@ -253,18 +255,42 @@ export async function sendManualReminder(
   }
 
   const reminder = reminderMetadata(reminderType)
-  const { error: notificationLogError } = await supabase.from('notifications').insert({
-    patient_id: appt.patient_id,
-    appointment_id: appointmentId,
-    notification_type: reminder.notificationType,
-    channel: 'whatsapp',
-    message_content: `${reminder.label} sent manually from dashboard`,
-    status: 'sent',
-    sent_at: sentAt,
+  let notificationLogErrorMessage: string | null = null
+  const notificationAuditRecord = buildReminderNotificationAuditRecord({
+    patientId: appt.patient_id,
+    appointmentId,
+    patientName: patient?.name,
+    patientPhone: patient?.phone_number,
+    reminderType,
+    sentAt,
+    edgeResponse: res.json,
   })
 
-  if (notificationLogError) {
-    console.error('[appointments] reminder notification log failed:', notificationLogError.message)
+  try {
+    const adminSupabase = createAdminSupabaseClient()
+    const { data: notificationLog, error: notificationLogError } = await adminSupabase
+      .from('notifications')
+      .insert(notificationAuditRecord)
+      .select('id')
+      .single()
+
+    if (notificationLogError) {
+      notificationLogErrorMessage = notificationLogError.message
+    } else if (!notificationLog?.id) {
+      notificationLogErrorMessage = 'Notification audit insert returned no row'
+    }
+  } catch (err) {
+    notificationLogErrorMessage = err instanceof Error ? err.message : 'Unknown notification audit error'
+  }
+
+  if (notificationLogErrorMessage) {
+    console.error('[appointments] reminder notification log failed:', notificationLogErrorMessage, {
+      appointmentId,
+      notificationType: reminder.notificationType,
+    })
+    revalidatePath('/dashboard/appointments')
+    revalidatePath('/dashboard')
+    redirect(appointmentNoticeUrl(appointmentId, reminderNoticeForStatus('audit_failed')))
   }
 
   revalidatePath('/dashboard/appointments')

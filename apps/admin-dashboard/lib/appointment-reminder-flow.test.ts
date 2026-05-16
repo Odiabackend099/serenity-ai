@@ -69,5 +69,6 @@ describe('appointment reminder flow', () => {
     expect(reminderNoticeForStatus('not_confirmed')).toBe('reminder-not-confirmed')
     expect(reminderNoticeForStatus('function_unavailable')).toBe('reminder-unavailable')
     expect(reminderNoticeForStatus('provider_failed')).toBe('reminder-failed')
+    expect(reminderNoticeForStatus('audit_failed')).toBe('reminder-audit-issue')
   })
 })

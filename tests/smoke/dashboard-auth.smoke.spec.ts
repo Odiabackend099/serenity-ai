@@ -111,14 +111,10 @@ test.describe('authenticated dashboard smoke', () => {
 
   test('exercises safe Hospital Setup QR controls when available', async ({ page }) => {
     await page.addInitScript(() => {
-      window.open = () => ({
-        document: {
-          write() {},
-          close() {},
-        },
-        focus() {},
-        print() {},
-      } as unknown as Window)
+      window.open = () => {
+        throw new Error('QR print should not open a popup')
+      }
+      window.print = () => window.localStorage.setItem('qr-print-called', '1')
     })
 
     await page.goto('/dashboard/settings')
@@ -131,6 +127,7 @@ test.describe('authenticated dashboard smoke', () => {
     await expect(page.getByRole('heading', { name: /^hospital setup$/i })).toBeVisible()
     await expect(page.getByRole('heading', { name: /dr\. adekunle's patient qr/i })).toBeVisible()
     await expect(page.getByRole('link', { name: /wa\.me\/2347026743998/i })).toBeVisible()
+    await expect(page.getByTestId('qr-print-card')).toHaveCount(1)
 
     await page.getByRole('button', { name: /^copy link$/i }).click()
     await expect(page.getByRole('button', { name: /copied|copy failed/i })).toBeVisible()
@@ -141,6 +138,8 @@ test.describe('authenticated dashboard smoke', () => {
     expect(download.suggestedFilename()).toMatch(/dr-adekunle-whatsapp-qr\.png/)
 
     await page.getByRole('button', { name: /^print$/i }).click()
+    await expect(page.getByRole('button', { name: /^print ready$/i })).toBeVisible()
+    await expect.poll(() => page.evaluate(() => window.localStorage.getItem('qr-print-called'))).toBe('1')
     await expectNoCrashText(page)
   })
 })

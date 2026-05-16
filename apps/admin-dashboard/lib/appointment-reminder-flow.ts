@@ -44,6 +44,7 @@ export type ReminderActionStatus =
   | 'function_unavailable'
   | 'provider_failed'
   | 'update_failed'
+  | 'audit_failed'
   | 'not_authorized'
 
 const metadata: Record<ManualReminderType, ReminderMetadata> = {
@@ -141,6 +142,8 @@ export function reminderNoticeForStatus(
       return 'reminder-failed'
     case 'update_failed':
       return 'could-not-save'
+    case 'audit_failed':
+      return 'reminder-audit-issue'
     case 'not_authorized':
       return 'not-authorized'
     default:

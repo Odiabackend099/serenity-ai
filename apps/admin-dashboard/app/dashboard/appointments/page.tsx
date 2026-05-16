@@ -636,6 +636,11 @@ function NoticeBanner({ notice }: { notice?: string }) {
       detail: 'The booking is still saved, but WhatsApp did not accept the reminder. Try sending it again.',
       tone: 'amber',
     },
+    'reminder-audit-issue': {
+      title: 'Reminder sent, audit needs check',
+      detail: 'The patient reminder was sent, but the dashboard could not save the reminder record. Ask support to review.',
+      tone: 'amber',
+    },
     'missing-phone': {
       title: 'Patient phone number missing',
       detail: 'Add a patient phone number before sending updates.',
