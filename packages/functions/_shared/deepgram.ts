@@ -8,6 +8,10 @@
  */
 
 const DEEPGRAM_API_BASE = 'https://api.deepgram.com/v1'
+const DEFAULT_TTS_MODEL = 'aura-2-thalia-en'
+const DEFAULT_TTS_ENCODING = 'opus'
+const DEFAULT_TTS_CONTAINER = 'ogg'
+const DEFAULT_WHATSAPP_TTS_MIME_TYPE = 'audio/ogg; codecs=opus'
 
 function getApiKey(): string {
   const key = Deno.env.get('DEEPGRAM_API_KEY')
@@ -21,6 +25,14 @@ export interface TranscriptionResult {
   confidence: number
   durationSeconds: number
   language: string
+}
+
+export interface TextToSpeechResult {
+  audioData: ArrayBuffer
+  mimeType: string
+  model: string
+  encoding: string
+  container: string
 }
 
 /**
@@ -103,12 +115,74 @@ export async function transcribeAudio(
 }
 
 /**
+ * Generate WhatsApp-ready speech audio using Deepgram Aura.
+ *
+ * WhatsApp can send OGG/Opus audio directly through Meta media upload, so the
+ * default TTS format is Opus in an OGG container. Raw PCM remains configurable
+ * through env vars, but should not be the default for WhatsApp replies.
+ */
+export async function synthesizeSpeechForWhatsApp(text: string): Promise<TextToSpeechResult> {
+  const apiKey = getApiKey()
+  const model = Deno.env.get('DEEPGRAM_TTS_MODEL') ?? DEFAULT_TTS_MODEL
+  const encoding = Deno.env.get('DEEPGRAM_TTS_ENCODING') ?? DEFAULT_TTS_ENCODING
+  const container = Deno.env.get('DEEPGRAM_TTS_CONTAINER') ?? DEFAULT_TTS_CONTAINER
+  const sampleRate = Deno.env.get('DEEPGRAM_TTS_SAMPLE_RATE')
+
+  const params = new URLSearchParams({ model, encoding, container })
+  if (sampleRate) params.set('sample_rate', sampleRate)
+
+  const speakText = normalizeTextForSpeech(text)
+  if (!speakText) throw new Error('Deepgram TTS requires non-empty text')
+
+  const res = await fetch(`${DEEPGRAM_API_BASE}/speak?${params}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Token ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ text: speakText }),
+  })
+
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Deepgram TTS failed (${res.status}): ${err}`)
+  }
+
+  return {
+    audioData: await res.arrayBuffer(),
+    mimeType: res.headers.get('content-type') ?? mimeTypeForSpeechOutput(encoding, container),
+    model,
+    encoding,
+    container,
+  }
+}
+
+/**
  * Build a redacted transcript from word-level redaction metadata.
  */
 function buildRedactedFromWords(
   words: Array<{ word: string; redacted?: boolean }>,
 ): string {
   return words.map((w) => (w.redacted ? '[REDACTED]' : w.word)).join(' ')
+}
+
+function normalizeTextForSpeech(text: string): string {
+  return text
+    .replace(/[•🌿💚🚨⚠️📞📧]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 1900)
+}
+
+function mimeTypeForSpeechOutput(encoding: string, container: string): string {
+  if (encoding === DEFAULT_TTS_ENCODING && container === DEFAULT_TTS_CONTAINER) {
+    return DEFAULT_WHATSAPP_TTS_MIME_TYPE
+  }
+
+  if (encoding === 'linear16' && container === 'none') return 'audio/l16'
+  if (container === 'wav') return 'audio/wav'
+  if (container === 'mp3') return 'audio/mpeg'
+  return 'application/octet-stream'
 }
 
 /**

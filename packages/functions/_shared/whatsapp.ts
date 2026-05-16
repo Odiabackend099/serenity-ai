@@ -88,6 +88,61 @@ async function sendMetaWhatsApp(to: string, text: string): Promise<string> {
   return data.messages?.[0]?.id ?? ''
 }
 
+async function sendMetaAudioWhatsApp(to: string, mediaId: string): Promise<string> {
+  const { phoneNumberId, accessToken, apiVersion } = getMetaWhatsAppConfig()
+  const res = await fetch(`https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: normalizeMetaRecipient(to),
+      type: 'audio',
+      audio: { id: mediaId },
+    }),
+  })
+
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Meta WhatsApp audio send failed (${res.status}): ${err}`)
+  }
+
+  const data = await res.json() as { messages?: Array<{ id?: string }> }
+  return data.messages?.[0]?.id ?? ''
+}
+
+async function uploadMetaMedia(
+  mediaData: ArrayBuffer,
+  mimeType: string,
+  filename: string,
+): Promise<string> {
+  const { phoneNumberId, accessToken, apiVersion } = getMetaWhatsAppConfig()
+  const form = new FormData()
+  form.append('messaging_product', 'whatsapp')
+  form.append('type', mimeType)
+  form.append('file', new Blob([mediaData], { type: mimeType }), filename)
+
+  const res = await fetch(`https://graph.facebook.com/${apiVersion}/${phoneNumberId}/media`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: form,
+  })
+
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Meta WhatsApp media upload failed (${res.status}): ${err}`)
+  }
+
+  const data = await res.json() as { id?: string }
+  if (!data.id) throw new Error('Meta WhatsApp media upload did not return a media ID')
+  return data.id
+}
+
 async function sendMetaTemplateMessage(
   to: string,
   templateName: string,
@@ -154,6 +209,25 @@ export async function sendTextMessage(to: string, text: string): Promise<string>
   return getWhatsAppProvider() === 'meta'
     ? sendMetaWhatsApp(to, text)
     : sendTwilioWhatsApp(to, text)
+}
+
+/**
+ * Upload and send an audio message through Meta WhatsApp.
+ *
+ * Twilio media replies require a public media URL, so generated in-memory TTS
+ * audio is supported only on the Meta provider path used in production.
+ */
+export async function sendAudioMessage(
+  to: string,
+  audioData: ArrayBuffer,
+  mimeType = 'audio/ogg; codecs=opus',
+): Promise<string> {
+  if (getWhatsAppProvider() !== 'meta') {
+    throw new Error('Generated WhatsApp audio replies require WHATSAPP_PROVIDER=meta')
+  }
+
+  const mediaId = await uploadMetaMedia(audioData, mimeType, audioFilenameForMimeType(mimeType))
+  return sendMetaAudioWhatsApp(to, mediaId)
 }
 
 /**
@@ -270,6 +344,13 @@ export async function verifyTwilioWebhookSignature(
 
 function normalizeMetaRecipient(phone: string): string {
   return phone.replace(/^whatsapp:/, '').replace(/[^\d]/g, '')
+}
+
+function audioFilenameForMimeType(mimeType: string): string {
+  if (mimeType.includes('ogg') || mimeType.includes('opus')) return 'dr-ade-reply.ogg'
+  if (mimeType.includes('mpeg') || mimeType.includes('mp3')) return 'dr-ade-reply.mp3'
+  if (mimeType.includes('wav')) return 'dr-ade-reply.wav'
+  return 'dr-ade-reply.audio'
 }
 
 export async function sendAppointmentReminder1Week(

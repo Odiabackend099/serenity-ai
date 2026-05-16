@@ -29,6 +29,7 @@ import {
 } from '../_shared/supabase.ts'
 import {
   sendTextMessage,
+  sendAudioMessage,
   downloadMedia,
   sendAppointmentReminder1Week,
   sendAppointmentReminder24h,
@@ -47,9 +48,12 @@ import {
 } from '../_shared/ai-provider.ts'
 import {
   transcribeAudio,
+  synthesizeSpeechForWhatsApp,
   redactPII,
   parseFeedbackRating,
 } from '../_shared/deepgram.ts'
+import { sendPatientReplyWithDeps } from '../_shared/patient-reply-sender.ts'
+import type { PatientReplyRoute } from '../_shared/voice-reply-policy.ts'
 import {
   checkCalendarConflict,
   cancelAppointmentEvent,
@@ -350,7 +354,7 @@ async function processMessage(
       transcriptionRedacted: null,
     })
 
-    await sendTextMessageSafely(phoneNumber, adminCommand.response, `admin command: ${adminCommand.label}`)
+    await sendPatientReply(supabase, phoneNumber, adminCommand.response, messageType, 'admin', `admin command: ${adminCommand.label}`)
     return
   }
 
@@ -372,7 +376,7 @@ async function processMessage(
       transcriptionRedacted: null,
     })
 
-    await sendTextMessage(phoneNumber, FIXED_CRISIS_RESPONSE)
+    await sendPatientReply(supabase, phoneNumber, FIXED_CRISIS_RESPONSE, messageType, 'emergency', 'pre-consent emergency')
 
     await triggerEmergencyAlert(supabase, {
       patientId,
@@ -392,16 +396,29 @@ async function processMessage(
     const consentCheck = isConsentResponse(messageText ?? '')
     if (consentCheck === 'yes') {
       await recordConsent(supabase, patientId, messageText ?? 'YES')
-      await sendTextMessage(phoneNumber,
-        `Thank you! Your consent has been recorded. 🌿\n\nI'm Dr Ade, your AI health assistant at Serenity Royale Hospital. How can I help you today?\n\n• Book an appointment\n• Ask about our services\n• Learn about costs\n• Get emergency support`)
+      await sendPatientReply(
+        supabase,
+        phoneNumber,
+        `Thank you! Your consent has been recorded. 🌿\n\nI'm Dr Ade, your AI health assistant at Serenity Royale Hospital. How can I help you today?\n\n• Book an appointment\n• Ask about our services\n• Learn about costs\n• Get emergency support`,
+        messageType,
+        'consent',
+        'consent recorded',
+      )
       await saveConversation(supabase, { patientId, messageType: 'text', patientMessage: messageText, patientMessageRedacted: messageText, aiResponse: 'Consent recorded. Welcome message sent.', mediaUrl: null, sentiment: 'positive', hasEmergencyKeywords: false, whatsappMessageId, transcription: null, transcriptionRedacted: null })
       return
     }
     if (consentCheck === 'no') {
-      await sendTextMessage(phoneNumber, `No problem. We respect your privacy. You can still reach us directly:\n📞 +234 806 219 7384\n📞 +234 811 689 1990\n📧 info@serenityroyalehospital.com\n\nWe're here 24/7 for emergencies. Stay well! 💚`)
+      await sendPatientReply(
+        supabase,
+        phoneNumber,
+        `No problem. We respect your privacy. You can still reach us directly:\n📞 +234 806 219 7384\n📞 +234 811 689 1990\n📧 info@serenityroyalehospital.com\n\nWe're here 24/7 for emergencies. Stay well! 💚`,
+        messageType,
+        'consent',
+        'consent declined',
+      )
       return
     }
-    await sendTextMessage(phoneNumber, buildConsentMessage(patient.name ?? undefined))
+    await sendPatientReply(supabase, phoneNumber, buildConsentMessage(patient.name ?? undefined), messageType, 'consent', 'consent prompt')
     return
   }
 
@@ -467,7 +484,7 @@ async function processMessage(
       transcriptionRedacted,
     })
 
-    await sendTextMessage(phoneNumber, FIXED_CRISIS_RESPONSE)
+    await sendPatientReply(supabase, phoneNumber, FIXED_CRISIS_RESPONSE, messageType, 'emergency', 'emergency response')
 
     await triggerEmergencyAlert(supabase, {
       patientId,
@@ -504,7 +521,7 @@ async function processMessage(
       transcriptionRedacted,
     })
 
-    await sendTextMessageSafely(phoneNumber, bookingResult.response, 'booking response')
+    await sendPatientReply(supabase, phoneNumber, bookingResult.response, messageType, 'booking', 'booking response')
     return
   }
 
@@ -525,7 +542,7 @@ async function processMessage(
       transcriptionRedacted,
     })
 
-    await sendTextMessageSafely(phoneNumber, memoryResult.response, `patient memory: ${memoryResult.label}`)
+    await sendPatientReply(supabase, phoneNumber, memoryResult.response, messageType, 'memory', `patient memory: ${memoryResult.label}`)
     return
   }
 
@@ -546,7 +563,7 @@ async function processMessage(
       transcriptionRedacted,
     })
 
-    await sendTextMessageSafely(phoneNumber, response, 'booking start')
+    await sendPatientReply(supabase, phoneNumber, response, messageType, 'booking_start', 'booking start')
     return
   }
 
@@ -575,7 +592,7 @@ async function processMessage(
       transcriptionRedacted,
     })
 
-    await sendTextMessageSafely(phoneNumber, templateResult.response, `hybrid template: ${templateResult.label}`)
+    await sendPatientReply(supabase, phoneNumber, templateResult.response, messageType, 'hybrid_template', `hybrid template: ${templateResult.label}`)
     return
   }
 
@@ -603,7 +620,7 @@ async function processMessage(
     })
 
     await trackApiUsage(supabase, provider, tokensUsed)
-    await sendTextMessageSafely(phoneNumber, response, 'image analysis')
+    await sendPatientReply(supabase, phoneNumber, response, messageType, 'image_analysis', 'image analysis')
     return
   }
 
@@ -641,7 +658,7 @@ async function processMessage(
   })
 
   // ── Send AI response ──────────────────────────────────────────────────────
-  await sendTextMessage(phoneNumber, finalResponse)
+  await sendPatientReply(supabase, phoneNumber, finalResponse, messageType, 'general_ai', 'general AI response')
 }
 
 async function handleAdminWhatsAppCommand(
@@ -2556,7 +2573,37 @@ async function sendTextMessageSafely(to: string, text: string, context: string):
   try {
     await sendTextMessage(to, text)
   } catch (err) {
-    console.error(`[ai-assistant] Twilio send failed for ${context}:`, err)
+    console.error(`[ai-assistant] WhatsApp text send failed for ${context}:`, err)
+  }
+}
+
+async function sendPatientReply(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  to: string,
+  text: string,
+  inboundMessageType: string | null,
+  route: PatientReplyRoute,
+  context: string,
+): Promise<void> {
+  const result = await sendPatientReplyWithDeps({
+    to,
+    text,
+    inboundMessageType,
+    route,
+    deps: {
+      sendText: (recipient, message) => sendTextMessageSafely(recipient, message, context),
+      synthesizeSpeech: synthesizeSpeechForWhatsApp,
+      sendAudio: sendAudioMessage,
+      trackUsage: (provider, costUsd) => trackApiUsage(supabase, provider, costUsd),
+    },
+  })
+
+  if (result.audioMessageId) {
+    console.log(`[ai-assistant] WhatsApp audio reply sent for ${context}: ${result.audioMessageId}`)
+  }
+
+  if (result.audioError) {
+    console.error(`[ai-assistant] WhatsApp audio reply failed for ${context}:`, result.audioError)
   }
 }
 
