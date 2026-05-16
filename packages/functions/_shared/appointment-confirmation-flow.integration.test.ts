@@ -214,7 +214,7 @@ describe('dashboard appointment confirmation integration flow', () => {
 
   it('keeps appointment saved and pending for manual review when Google Calendar fails', async () => {
     const harness = makeDeps({
-      calendarCheckError: new Error('Google Calendar POST /freeBusy failed (400): {"error":{"reason":"badRequest"}}'),
+      calendarInsertError: new Error('Google Calendar event creation failed (400): {"error":{"reason":"badRequest"}}'),
     })
 
     const result = await confirmDashboardAppointmentWithDeps('appt-1', harness.deps)
@@ -248,22 +248,32 @@ describe('dashboard appointment confirmation integration flow', () => {
     expect(harness.logs).toHaveLength(0)
   })
 
-  it('blocks dashboard confirmation when Google Calendar reports the slot is busy', async () => {
+  it('allows dashboard confirmation when shared hospital calendar is busy but the selected doctor is free', async () => {
     const harness = makeDeps({ calendarBusy: true })
 
     const result = await confirmDashboardAppointmentWithDeps('appt-1', harness.deps)
 
     expect(result).toMatchObject({
-      confirmed: false,
-      calendarStatus: 'pending_calendar_busy',
+      confirmed: true,
+      calendarStatus: 'synced',
     })
     expect(harness.updates[0]).toMatchObject({
-      status: 'pending',
-      calendar_sync_status: 'pending_calendar_busy',
+      status: 'confirmed',
+      calendar_sync_status: 'synced',
     })
-    expect(harness.sentTexts).toHaveLength(0)
-    expect(harness.emails).toHaveLength(0)
-    expect(harness.logs).toHaveLength(0)
+    expect(harness.sentTexts.map((message) => message.to)).toEqual([
+      '+2349137565087',
+      '+2348072023652',
+      '+2348062197384',
+    ])
+    expect(harness.emails).toHaveLength(1)
+    expect(harness.logs.map((log) => log.recipientRole).sort()).toEqual([
+      'assigned_doctor',
+      'operations_manager',
+      'patient',
+      'patient',
+      'primary_doctor',
+    ].sort())
   })
 
   it('blocks dashboard confirmation when assigned doctor does not serve the appointment center', async () => {

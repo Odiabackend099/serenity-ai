@@ -202,7 +202,12 @@ export async function confirmDashboardAppointmentWithDeps(
         listActiveAppointments: deps.listActiveAppointments,
         listActiveSlotHolds: deps.listActiveSlotHolds,
         isCalendarConfigured: deps.isCalendarConfigured,
-        checkCalendarConflict: deps.checkCalendarConflict,
+        // The hospital uses one shared Google Calendar for all doctors. FreeBusy
+        // on that calendar reports any doctor at the same time as busy, which
+        // incorrectly blocks parallel appointments with different doctors. For
+        // dashboard confirmations, the selected doctor's DB schedule is the
+        // capacity check; calendar creation below is the sync/proof step.
+        checkCalendarConflict: async () => false,
         now: deps.now,
       })
 
