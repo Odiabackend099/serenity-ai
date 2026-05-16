@@ -351,9 +351,10 @@ function getMetaMessageContent(
   const media = asRecord(message[messageType])
   const mediaId = asString(media.id) || null
   const mimeType = asString(media.mime_type) || null
+  const caption = asString(media.caption)
 
   return {
-    text: getMetaMediaPlaceholder(messageType),
+    text: caption || getMetaMediaPlaceholder(messageType),
     mediaId,
     mediaMimeType: mimeType,
   }

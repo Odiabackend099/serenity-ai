@@ -174,13 +174,23 @@ export async function sendTemplateMessage(
 }
 
 /**
- * Download media from a Twilio MediaUrl.
+ * Download media from WhatsApp.
+ *
+ * Twilio stores an absolute MediaUrl. Meta stores a media ID, which must first
+ * be resolved to a temporary download URL through the Graph API.
  */
-export async function downloadMedia(mediaUrl: string): Promise<{ data: ArrayBuffer; mimeType: string }> {
-  if (!mediaUrl.startsWith('http://') && !mediaUrl.startsWith('https://')) {
-    throw new Error('Twilio media download requires an absolute MediaUrl')
+export async function downloadMedia(
+  mediaReference: string,
+  fallbackMimeType?: string | null,
+): Promise<{ data: ArrayBuffer; mimeType: string }> {
+  if (!mediaReference.startsWith('http://') && !mediaReference.startsWith('https://')) {
+    return downloadMetaMedia(mediaReference, fallbackMimeType)
   }
 
+  return downloadTwilioMedia(mediaReference)
+}
+
+async function downloadTwilioMedia(mediaUrl: string): Promise<{ data: ArrayBuffer; mimeType: string }> {
   const { accountSid, authToken } = getTwilioConfig()
   const fileRes = await fetch(mediaUrl, {
     headers: { Authorization: basicAuth(accountSid, authToken) },
@@ -193,6 +203,40 @@ export async function downloadMedia(mediaUrl: string): Promise<{ data: ArrayBuff
   return {
     data: await fileRes.arrayBuffer(),
     mimeType: fileRes.headers.get('content-type') ?? 'application/octet-stream',
+  }
+}
+
+async function downloadMetaMedia(
+  mediaId: string,
+  fallbackMimeType?: string | null,
+): Promise<{ data: ArrayBuffer; mimeType: string }> {
+  const { accessToken, apiVersion } = getMetaWhatsAppConfig()
+  const metadataRes = await fetch(`https://graph.facebook.com/${apiVersion}/${encodeURIComponent(mediaId)}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+
+  if (!metadataRes.ok) {
+    const err = await metadataRes.text()
+    throw new Error(`Meta WhatsApp media metadata failed (${metadataRes.status}): ${err}`)
+  }
+
+  const metadata = await metadataRes.json() as { url?: string; mime_type?: string }
+  if (!metadata.url) {
+    throw new Error('Meta WhatsApp media metadata did not include a download URL')
+  }
+
+  const fileRes = await fetch(metadata.url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+
+  if (!fileRes.ok) {
+    const err = await fileRes.text()
+    throw new Error(`Meta WhatsApp media download failed (${fileRes.status}): ${err}`)
+  }
+
+  return {
+    data: await fileRes.arrayBuffer(),
+    mimeType: fileRes.headers.get('content-type') ?? metadata.mime_type ?? fallbackMimeType ?? 'application/octet-stream',
   }
 }
 

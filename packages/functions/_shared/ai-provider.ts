@@ -9,8 +9,10 @@ import type { AIMessage, EmergencyDetection } from './types.ts'
 
 const DEFAULT_GROQ_BASE_URL = 'https://api.groq.com/openai/v1'
 const DEFAULT_GROQ_MODEL = 'llama-3.3-70b-versatile'
+const DEFAULT_GROQ_VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct'
 const DEFAULT_MAX_TOKENS = 240
 const DEFAULT_TIMEOUT_MS = 8500
+const DEFAULT_IMAGE_MAX_BYTES = 4 * 1024 * 1024
 
 // Dr Ade system prompt — DO NOT change without MD approval
 const DR_ADE_SYSTEM_PROMPT = `You are Dr Ade, the AI-powered receptionist and health assistant for Serenity Royale Hospital in Abuja, Nigeria. You represent the hospital with warmth, professionalism, and cultural sensitivity.
@@ -99,6 +101,14 @@ type ProviderConfig = {
   timeoutMs: number
 }
 
+type VisionMessage = {
+  role: 'system' | 'user'
+  content: string | Array<
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } }
+  >
+}
+
 function getProviderConfig(): ProviderConfig {
   const provider = (Deno.env.get('AI_PROVIDER') ?? 'groq').toLowerCase()
   const maxTokens = Number(Deno.env.get('AI_MAX_TOKENS') ?? Deno.env.get('GROQ_MAX_TOKENS') ?? String(DEFAULT_MAX_TOKENS))
@@ -125,6 +135,17 @@ function getProviderConfig(): ProviderConfig {
     maxTokens,
     temperature,
     timeoutMs,
+  }
+}
+
+function getVisionProviderConfig(): ProviderConfig {
+  const config = getProviderConfig()
+  return {
+    ...config,
+    model: Deno.env.get('GROQ_VISION_MODEL')
+      ?? Deno.env.get('AI_VISION_MODEL')
+      ?? DEFAULT_GROQ_VISION_MODEL,
+    maxTokens: Number(Deno.env.get('AI_VISION_MAX_TOKENS') ?? Deno.env.get('GROQ_VISION_MAX_TOKENS') ?? '260'),
   }
 }
 
@@ -205,9 +226,122 @@ export async function callDrAde(
   }
 }
 
+export async function analyzeImageWithDrAde(
+  imageData: ArrayBuffer,
+  mimeType: string,
+  patientMessage: string | null,
+  _patientPhone?: string,
+): Promise<AIResponse> {
+  const config = getVisionProviderConfig()
+
+  if (!config.apiKey) {
+    console.error(`[ai-provider] Missing API key for provider ${config.provider} vision model`)
+    return imageFallbackResponse(config.provider)
+  }
+
+  if (!mimeType.toLowerCase().startsWith('image/')) {
+    console.error(`[ai-provider] Unsupported image MIME type: ${mimeType}`)
+    return imageFallbackResponse(config.provider)
+  }
+
+  const maxBytes = Number(Deno.env.get('AI_IMAGE_MAX_BYTES') ?? String(DEFAULT_IMAGE_MAX_BYTES))
+  if (imageData.byteLength > maxBytes) {
+    console.error(`[ai-provider] Image is too large for vision analysis: ${imageData.byteLength} bytes`)
+    return {
+      ...imageFallbackResponse(config.provider),
+      message: 'I received the image, but it is too large for me to review here. Please send a smaller image or type what you need help with.',
+    }
+  }
+
+  const caption = patientMessage && !isMediaPlaceholder(patientMessage)
+    ? patientMessage
+    : 'The patient sent an image on WhatsApp.'
+  const dataUrl = `data:${mimeType};base64,${arrayBufferToBase64(imageData)}`
+  const messages: VisionMessage[] = [
+    {
+      role: 'system',
+      content: `${DR_ADE_SYSTEM_PROMPT}\n\nImage handling: Review patient images only for general understanding and administrative support. Do not diagnose from an image. If the image suggests urgent symptoms, injury, overdose, self-harm, or severe distress, advise the patient to call Serenity Royale Hospital immediately at +234 806 219 7384 or seek emergency care. Keep the reply concise for WhatsApp.`,
+    },
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: `${caption}\n\nPlease help the patient based on this image. If it is an appointment, document, screenshot, prescription, medication, or hospital-related image, explain the next helpful step. If you cannot safely interpret it, ask one clear follow-up question.`,
+        },
+        {
+          type: 'image_url',
+          image_url: { url: dataUrl },
+        },
+      ],
+    },
+  ]
+
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), config.timeoutMs)
+
+    const res = await (async () => {
+      try {
+        return await fetch(`${config.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${config.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: config.model,
+            messages,
+            temperature: 0.4,
+            max_tokens: config.maxTokens,
+            top_p: 0.9,
+          }),
+          signal: controller.signal,
+        })
+      } finally {
+        clearTimeout(timeout)
+      }
+    })()
+
+    if (!res.ok) {
+      const err = await res.text()
+      throw new Error(`${config.provider} vision API error (${res.status}): ${err}`)
+    }
+
+    const data = await res.json() as {
+      choices?: Array<{ message?: { content?: string } }>
+      usage?: { total_tokens?: number }
+    }
+
+    const content = data.choices?.[0]?.message?.content?.trim() ?? ''
+    if (!content) throw new Error(`${config.provider} vision model returned an empty response`)
+
+    return {
+      message: content,
+      sentiment: detectSentimentFromText(patientMessage ?? ''),
+      usedFallback: false,
+      tokensUsed: data.usage?.total_tokens ?? 0,
+      provider: `${config.provider}:vision`,
+    }
+  } catch (err) {
+    console.error('[ai-provider] Vision API call failed:', err)
+    return imageFallbackResponse(config.provider)
+  }
+}
+
 function fallbackResponse(provider: string): AIResponse {
   return {
     message: 'I apologize, I am having a brief technical issue with general questions. I can still help you book an appointment, or you can call us at +234 806 219 7384.',
+    sentiment: null,
+    usedFallback: true,
+    tokensUsed: 0,
+    provider,
+  }
+}
+
+function imageFallbackResponse(provider: string): AIResponse {
+  return {
+    message: 'I received the image, but I could not review it clearly here. Please type what you want help with, or call Serenity Royale Hospital at +234 806 219 7384 if it is urgent.',
     sentiment: null,
     usedFallback: true,
     tokensUsed: 0,
@@ -285,6 +419,27 @@ function detectSentimentFromResponse(
   if (positiveWords.some((w) => lastUserMsg.includes(w))) return 'positive'
 
   return 'neutral'
+}
+
+function detectSentimentFromText(message: string): 'positive' | 'neutral' | 'distressed' | 'crisis' | null {
+  return detectSentimentFromResponse([{ role: 'user', content: message }])
+}
+
+function isMediaPlaceholder(message: string): boolean {
+  return ['[image]', '[voice note]', '[video]', '[document]', '[sticker]', '[message]'].includes(message.trim().toLowerCase())
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  const chunkSize = 0x8000
+  let binary = ''
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize)
+    binary += String.fromCharCode(...chunk)
+  }
+
+  return btoa(binary)
 }
 
 export function buildConsentMessage(patientName?: string): string {

@@ -40,6 +40,7 @@ import {
 import { sendStaffWhatsAppNotification, staffTemplateName } from '../_shared/staff-whatsapp.ts'
 import {
   callDrAde,
+  analyzeImageWithDrAde,
   detectEmergency,
   buildConsentMessage,
   isConsentResponse,
@@ -410,7 +411,10 @@ async function processMessage(
 
   if (messageType === 'audio' && queueItem.media_url) {
     try {
-      const { data: mediaBytes, mimeType } = await downloadMedia(queueItem.media_url as string)
+      const { data: mediaBytes, mimeType } = await downloadMedia(
+        queueItem.media_url as string,
+        queueItem.media_mime_type as string | null,
+      )
       const result = await transcribeAudio(mediaBytes, mimeType)
       transcription = result.transcript
       transcriptionRedacted = result.redacted
@@ -575,6 +579,34 @@ async function processMessage(
     return
   }
 
+  // ── Handle images — download from WhatsApp and analyze with vision AI ─────
+  if (messageType === 'image' && queueItem.media_url) {
+    const { response, provider, sentiment, tokensUsed } = await analyzeImageMessage(
+      queueItem.media_url as string,
+      queueItem.media_mime_type as string | null,
+      messageText,
+      phoneNumber,
+    )
+
+    await saveConversation(supabase, {
+      patientId,
+      messageType,
+      patientMessage: messageText,
+      patientMessageRedacted: messageRedacted,
+      aiResponse: response,
+      mediaUrl: queueItem.media_url as string | null,
+      sentiment,
+      hasEmergencyKeywords: false,
+      whatsappMessageId,
+      transcription,
+      transcriptionRedacted,
+    })
+
+    await trackApiUsage(supabase, provider, tokensUsed)
+    await sendTextMessageSafely(phoneNumber, response, 'image analysis')
+    return
+  }
+
   // ── Build conversation history for AI ────────────────────────────────────
   const history = patientMemory.recentConversation.length > 0
     ? patientMemory.recentConversation
@@ -710,6 +742,37 @@ function isAuthorizedAdminPhone(phoneNumber: string): boolean {
     Deno.env.get('STAFF_BOOKING_WHATSAPP_TO'),
     ...(Deno.env.get('ADMIN_COMMAND_WHATSAPP_NUMBERS') ?? '').split(','),
   ])
+}
+
+async function analyzeImageMessage(
+  mediaReference: string,
+  fallbackMimeType: string | null,
+  patientMessage: string | null,
+  phoneNumber: string,
+): Promise<{
+  response: string
+  provider: string
+  sentiment: 'positive' | 'neutral' | 'distressed' | 'crisis' | null
+  tokensUsed: number
+}> {
+  try {
+    const { data: mediaBytes, mimeType } = await downloadMedia(mediaReference, fallbackMimeType)
+    const result = await analyzeImageWithDrAde(mediaBytes, mimeType, patientMessage, phoneNumber)
+    return {
+      response: result.message,
+      provider: result.provider || 'groq:vision',
+      sentiment: result.sentiment,
+      tokensUsed: result.tokensUsed,
+    }
+  } catch (err) {
+    console.error('[ai-assistant] Image analysis failed:', err)
+    return {
+      response: 'I received the image, but I could not review it clearly here. Please type what you want help with, or call Serenity Royale Hospital at +234 806 219 7384 if it is urgent.',
+      provider: 'vision',
+      sentiment: null,
+      tokensUsed: 0,
+    }
+  }
 }
 
 function parseAdminDateRange(message: string): AdminDateRange {

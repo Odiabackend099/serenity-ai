@@ -269,6 +269,32 @@ describe('Meta WhatsApp webhook integration flow', () => {
     })
   })
 
+  it('preserves Meta image captions while keeping the media ID for download', () => {
+    const payload = metaPayload()
+    const value = payload.entry[0].changes[0].value
+    value.messages = [{
+      from: '2348141995397',
+      id: 'wamid.image-1',
+      timestamp: '1778490000',
+      image: {
+        id: 'media-image-1',
+        mime_type: 'image/jpeg',
+        caption: 'Please check this lab result',
+      },
+      type: 'image',
+    }]
+
+    const messages = extractMetaInboundMessages(payload)
+
+    expect(messages[0]).toMatchObject({
+      messageId: 'wamid.image-1',
+      messageText: 'Please check this lab result',
+      messageType: 'image',
+      mediaId: 'media-image-1',
+      mediaMimeType: 'image/jpeg',
+    })
+  })
+
   it('verifies Meta HMAC signatures with SHA-256', async () => {
     const request = await signedPost(metaPayload(), 'shared-secret')
     const signature = request.headers.get('x-hub-signature-256') ?? ''
