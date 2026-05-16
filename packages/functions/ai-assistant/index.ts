@@ -2296,13 +2296,15 @@ function buildStaffBookingTemplateParameters(params: {
   dashboardUrl: string | null
 }): string[] {
   return [
-    params.patientName,
-    params.patientPhone || 'Not provided',
-    params.serviceType,
-    params.formattedDate,
-    params.appointmentTime.slice(0, 5),
-    params.center,
-    params.doctorName,
+    [
+      `Patient: ${params.patientName}`,
+      `Phone: ${params.patientPhone || 'Not provided'}`,
+      `Service: ${params.serviceType}`,
+      `Date: ${params.formattedDate}`,
+      `Time: ${params.appointmentTime.slice(0, 5)}`,
+      `Center: ${params.center}`,
+      `Doctor: ${params.doctorName}`,
+    ].join('; '),
     params.dashboardUrl ?? 'Open the dashboard',
   ]
 }

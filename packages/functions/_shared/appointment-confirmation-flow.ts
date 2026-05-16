@@ -531,12 +531,14 @@ function buildAssignedDoctorConfirmationTemplateParameters(params: {
   center: string
 }): string[] {
   return [
-    params.patientName,
-    params.patientPhone || 'Not provided',
-    params.serviceType,
-    params.appointmentDate,
-    params.appointmentTime,
-    params.center,
+    [
+      `Patient: ${params.patientName}`,
+      `Phone: ${params.patientPhone || 'Not provided'}`,
+      `Service: ${params.serviceType}`,
+      `Date: ${params.appointmentDate}`,
+      `Time: ${params.appointmentTime}`,
+      `Center: ${params.center}`,
+    ].join('; '),
   ]
 }
 
@@ -563,12 +565,14 @@ function buildDashboardConfirmationTemplateParameters(params: {
   doctorName: string
 }): string[] {
   return [
-    params.patientName,
-    params.patientPhone || 'Not provided',
-    params.serviceType,
-    params.appointmentDate,
-    params.appointmentTime,
-    params.center,
+    [
+      `Patient: ${params.patientName}`,
+      `Phone: ${params.patientPhone || 'Not provided'}`,
+      `Service: ${params.serviceType}`,
+      `Date: ${params.appointmentDate}`,
+      `Time: ${params.appointmentTime}`,
+      `Center: ${params.center}`,
+    ].join('; '),
     params.doctorName,
   ]
 }
